@@ -3,6 +3,7 @@
 ## Sources
 
 - **Zenodo dataset:** [DOI 10.5281/zenodo.7886409](https://doi.org/10.5281/zenodo.7886409)  
+  Includes the data publication PDF (`DASLakeZurichDataPublication.pdf`); it is **not** committed in this Git repo (download from Zenodo).  
   Landing page: [https://zenodo.org/records/7886409](https://zenodo.org/records/7886409)
 
 - **Reference / publication repository:** see the Zenodo record and associated publication (PDF in the dataset) for the canonical **ETH Zurich** data publication layout. If a public GitLab mirror exists for the original code bundle, it is typically linked from Zenodo metadata.
