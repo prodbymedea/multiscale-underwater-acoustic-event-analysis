@@ -1,0 +1,48 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.ipynb_checkpoints/
+
+# OS / IDE / local tools
+.DS_Store
+.claude/
+.idea/
+.vscode/
+*.swp
+*.log
+
+# Raw data & archives (never commit)
+*.h5
+*.zip
+*.tdms
+# Bundled Zenodo publication PDF (available from Zenodo; keep repo code-focused)
+DASLakeZurichDataPublication.pdf
+
+# User data drop (see data/README.md)
+/data/raw/
+
+# Full pipeline outputs (regenerate locally)
+/output/
+
+# Matplotlib cache
+.mplconfig/
+
+# Optional: root-level quick plots from visualize_export (keep only figures/shots demos)
+/figures/das_preview*.png
+/figures/spectrogram.png
+/figures/waveform.png
+/figures/situation.png
+
+# Screening figures for non-demo shots
+/figures/shots/morning_00/
+
+# Large Orca spectrogram preview (keep locally; optional)
+/figures/shots/whales_orca/spectrogram.png
