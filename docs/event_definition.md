@@ -175,6 +175,16 @@ Instead, the project should aim for a representation in which:
 - DAS activity becomes the main visual object,
 - and hydrophone helps anchor and support interpretation.
 
+For the current MVP, the main DAS representation will be a **normalized rolling RMS activity map**.
+
+In this representation, each cell of the DAS view reflects the relative signal activity of a given channel within a short time window, rather than raw amplitude alone.
+
+This choice was made because it is:
+- more stable than raw amplitude,
+- easier to interpret,
+- suitable for time-based visualization,
+- and appropriate for synchronized viewing together with hydrophone score and map context.
+
 ## Current output fields
 The current `events.json` output contains fields such as:
 - `event_id`
