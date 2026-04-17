@@ -4,7 +4,7 @@
 Rivet, D., de Cacqueray, B., Sladen, A., Doisy, Y., Roques, A., & Calbris, G. (2021).  
 Preliminary assessment of ship detection and trajectory evaluation using distributed acoustic sensing on an optical fiber telecom cable.  
 Journal of the Acoustical Society of America, 149(4), 2615–2627.  
-https://hal.science/hal-03209679v1
+https://hal.science/hal-03209679/file/JASA_2020_v2.pdf
 
 ---
 
