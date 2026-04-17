@@ -52,6 +52,10 @@ The technical core output of the MVP is an interactive viewer in which the user 
 - view map-based spatial context,
 - and jump to candidate events.
 
+The main DAS visual layer in the MVP will be based on a **normalized rolling RMS activity map**.
+
+This means that DAS will be shown not as raw amplitude only, but as a time- and channel-dependent activity representation that is more interpretable for synchronized visual exploration.
+
 This technical structure is already defined conceptually and will guide the next implementation stage.
 
 ## Out of scope (explicitly not MVP)
