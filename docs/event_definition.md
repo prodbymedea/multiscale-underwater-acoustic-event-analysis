@@ -1,59 +1,195 @@
-# Baseline candidate event definition
+# Event Definition
 
-Implemented in **`src/extract_events_baseline.py`**. This is a **candidate** generator for MVP exploration, not validated ground truth.
+## Current status
+This document describes the **current baseline event definition** used in the project.
 
-## Philosophy
+It should not be treated as the final conceptual definition of an event. The current implementation is a practical starting point for MVP exploration and will evolve toward a score-based and more DAS-centered representation.
 
-- **Primary signal:** Hydrophone **STFT** already exported as `spectrogram.json` (Recorder **C**, preview channel **Tetra-Top**—same as ingest).
-- **DAS:** Not used for detection. Optional **`das_support`** per event: distance bin with largest variability in `das_preview.json` over the event interval (supporting view only).
+## Current baseline philosophy
+At the current stage, candidate event timing is derived primarily from **hydrophone spectrogram activity**.
 
-<!-- I suggest that we actually use both hydrophone and DAS data for detection of whales. Event detected on hydrophone may be or may be not detected on the DAS channels.  -->
+This choice was made because hydrophone spectrograms currently provide the most stable and interpretable baseline for identifying interesting time intervals in the selected dataset.
 
-## Score (per STFT time frame)
+However, the long-term focus of the project is **DAS-centered visualization**, not hydrophone-only detection. Hydrophone data are therefore treated mainly as:
+- a reference timing source,
+- a supporting signal for interpretation,
+- and a synchronized secondary view.
 
-1. Restrict frequencies to **[fmin, fmax]** Hz (default **30–1500** Hz).
-<!-- why this range? Humpback whales produce a wide range of sounds, generally vocalizing between 40 Hz and 6 kHz, though some sounds can extend beyond 24 kHz.  listen to their songs: https://dosits.org/galleries/audio-gallery/marine-mammals/baleen-whales/humpback-whale/?vimeography_gallery=12&vimeography_video=226917123 -->
-3. **Score** = mean `Sxx_db` over retained frequency bins for that frame.
- <!-- why this score?  -->
+DAS should remain the main visual modality of the project.
 
-## Threshold
+## Current baseline score
+The current baseline detector uses the exported hydrophone spectrogram (`spectrogram.json`) and computes a frame-wise score.
+
+### Frequency range
+The current working frequency range is **30–1500 Hz**.
+
+This range should be treated as a **baseline MVP choice**, not as a final biologically optimized band. It was selected as a practical starting point for exploring low- to mid-frequency acoustic activity, but it may need further adjustment depending on the target signal and domain interpretation.
+
+### Score definition
+For each STFT time frame, the current score is defined as the mean `Sxx_db` over the retained frequency bins.
+
+This should be understood as a **simple baseline score**, chosen for reproducibility and interpretability during early MVP development. It is not assumed to be the only or best possible event score.
+
+Other feature definitions may later be explored, including:
+- alternative band-based energy measures,
+- weighted frequency aggregation,
+- MFCC-based features,
+- or combined DAS + hydrophone evidence.
+
+## Thresholding
+The current detector uses a robust threshold:
 
 \[
 \text{threshold} = \mathrm{median}(\text{scores}) + k \cdot 1.4826 \cdot \mathrm{MAD}(\text{scores})
 \]
 
-Default **k = 3**. MAD provides a robust spread estimate under heavy-tailed noise.
-<!-- discussion needed, there can be better score/threshold pairs even on hydrophone data   -->
+with default **k = 3**.
+
+This threshold is currently used to convert a continuous score into candidate event intervals.
+
+At the same time, the project should move beyond purely threshold-based interpretation. In future iterations, the continuous score itself should also be visualized and used as an interpretable layer, rather than only showing thresholded event intervals.
+
 ## Event formation
+The current baseline event formation is:
 
-- Mark frames with **score > threshold** as active.
-- **Merge** runs separated by ≤ **max_gap_frames** (default **2** ≈ 0.2 s).
-- Discard segments shorter than **min_duration_s** (default **0.25** s).
+- mark frames with **score > threshold** as active,
+- merge runs separated by up to **max_gap_frames**,
+- discard very short segments.
 
-## Output fields (per event)
+This produces candidate event intervals for navigation and exploration.
 
-See `output_samples/shots/whales_humpback/events.json` for examples: `event_id`, `shot_id`, `start_time_s`, `end_time_s`, `duration_s`, `score`, `detection_basis`, `notes`, optional `das_support`.
+## Binary event vs score-based representation
+The project should distinguish between two related but different concepts:
 
-## Limitations
+### 1. Event interval
+A binary interval is still useful because it allows:
+- event listing,
+- navigation,
+- jumping to interesting time regions,
+- and summarizing a shot.
 
-- Single hydrophone channel in spectrogram export. 
-- Time resolution limited by STFT hop (~0.1 s in current ingest settings).
-- No species or vessel discrimination.
+### 2. Event score / confidence over time
+A continuous score is more useful for interpretation because it shows:
+- how strong the event evidence is,
+- how it changes over time,
+- and where thresholding may hide gradual transitions.
 
-## Possible improvements (still without ML)
+For this reason, the recommended direction is to keep **binary intervals for navigation**, but also expose a **continuous score or confidence-like representation**.
 
-- Multi-channel consensus (export more channels in ingest).
-- Adaptive threshold per time window.
-- Refine boundaries with time-domain envelope on full-rate data (requires reading HDF5 or longer waveform export).
+At the current stage, it is safer to describe this value as:
+- activity score,
+- detection score,
+- or confidence-like score,
 
-<!-- Overall suggestion: 
-0. Questions to ask about this project. What is the main value and impact of this work? Who is the user? What user wants to do with your work, and what kind of information they want to see?  (e.g. marine biologist with little to no bg in computer science, they want to see what is das data and how they can use it for their research. Or DAS data collector, who wants to visualize their own dataset and reuse your pipeline? If instead of humpback whale they want to work on other species/ships, which part of pipeline they need to change? 
-1. Create some summary of the dataset. What is in there (coordinates of the cable, what are the data (DAS + hydrophones), metadata (sampling frequency, how many channels etc) 
-2. lit review shall be extended. Make a folder with literature, add relevant projects and papers. For each paper/project create a short summary and why it is relevant to this project. Save reference in bibtex for further injection to your latex thesis and most of your "SOTA & Methods" section. 
-ideas to look for: https://github.com/hetinghong/DASView https://pubs.geoscienceworld.org/ssa/srl/article/95/5/3055/645865/DASPy-A-Python-Toolbox-for-DAS-Seismology https://dasdae.org etc. 
-ML humpback whale detectors https://www.kaggle.com/models/google/humpback-whale - it will work on hydrophones, I think.  will it work on DAS? let's try, perhaps some extra processing is needed. I'll help here! 
-If you don't want to use ML (why?) we can create a different pipeline based on spectrogram/MFCC features. 
-2. Put  stress on DAS data visualization. 
-3. Event definition: if we choose whales or humpback whales in particular, event is "whale call detection probability" from 0 to 1 or 0-100%. Should we have threshold at all?  In the paper the authors say that the cable had sensitivity issues. SHall we add that to visualization? What else can we visualize from this dataset? Ground truth position of emitted signal? predicted position of the emitted signal? MVP definition: ok maybe I was not clear enough, but DAS data is the key data source in this project. Hydrophones may be or may be not used for visualization, on MVP (why? because there is a lot of tools for hydrophone data visualization, no research gap and no MSc work is needed for that)
-4. Will the result of this visualization tool be transferable to other DAS datasets? Ask yourself questions, what will be different for different datasets (position of the cable? distance between channels etc). And this should lead you to the answer "what is our inputs and what are our outputs". 
--->
+rather than a strict calibrated probability.
+
+If later the score is normalized into a bounded range such as 0–1, it can be presented in the interface as a whale-call confidence-like value, but that would still require careful interpretation.
+
+## Role of hydrophone
+Hydrophone data should remain in the project, but mainly as:
+- a reference timing source,
+- a support signal for event interpretation,
+- and a synchronized secondary view.
+
+Hydrophone-based scoring is useful because it is currently the most stable and interpretable baseline for identifying interesting intervals.
+
+However, hydrophone data should not become the main focus of the whole project.
+
+## Role of DAS
+DAS is the central visual modality of the project.
+
+At the moment, DAS is not yet used as the primary baseline detector. Instead, it is used as a supporting view linked to detected time intervals.
+
+This should evolve further. In the intended MVP direction, DAS should not only show raw amplitude, but also a more interpretable representation such as:
+- normalized DAS activity score,
+- rolling DAS intensity,
+- channel-wise activity map,
+- or confidence-like DAS heatmap.
+
+The purpose is to show how event-related activity appears and evolves along the cable over time.
+
+## Combined hydrophone and DAS evidence
+The long-term direction of the project should be to combine **hydrophone and DAS evidence** rather than relying on hydrophone alone.
+
+This does not necessarily mean a hard joint detector in the first MVP. A more realistic immediate approach is:
+
+- use hydrophone as the baseline timing and support layer,
+- use DAS as the main visual evidence layer,
+- and later move toward a combined event confidence based on both modalities.
+
+This is important because an event may be visible on the hydrophone signal but weak or absent on DAS channels, or vice versa. Such differences are themselves informative and should not be hidden.
+
+## DAS-centered event representation
+The final visual interpretation should therefore not be based only on hydrophone-derived event intervals.
+
+Instead, the project should aim for a representation in which:
+- binary event intervals remain useful for navigation,
+- continuous score over time shows event strength,
+- DAS activity becomes the main visual object,
+- and hydrophone helps anchor and support interpretation.
+
+## Current output fields
+The current `events.json` output contains fields such as:
+- `event_id`
+- `shot_id`
+- `start_time_s`
+- `end_time_s`
+- `duration_s`
+- `score`
+- `detection_basis`
+- `notes`
+- optional `das_support`
+
+These fields are sufficient for baseline event navigation, but likely not sufficient for the final event representation in the future MVP.
+
+## Current limitations
+The current baseline has several limitations:
+
+- it uses a single hydrophone preview channel,
+- the score is based on a simple mean over selected spectrogram bins,
+- the selected frequency range is only a working baseline,
+- time resolution is limited by the STFT configuration,
+- there is no species classification,
+- there is no calibrated probability model,
+- DAS is not yet used as a full event evidence source.
+
+## Cable sensitivity limitations
+The paper indicates that the cable had sensitivity limitations in some parts of the system.
+
+This is relevant for interpretation because weak DAS response does not always imply absence of an acoustic event. For this reason, cable sensitivity issues should ideally be reflected in the visualization at least as:
+- contextual information,
+- annotation,
+- or an interpretive note for the user.
+
+This does not have to become a full subsystem in the MVP, but it should not be ignored.
+
+## Source ground truth in the interface
+If source metadata and emitted signal location are available and reliable, the interface should display source ground-truth position.
+
+This would improve:
+- spatial interpretability,
+- relation between emission and observed activity,
+- and the overall clarity of the synchronized map-based view.
+
+Predicted source position should only be shown if the project later includes a justified estimation method. Ground-truth display is more realistic for the current scope.
+
+## Open questions
+The following questions remain open and should be addressed in the next project stage:
+
+- Is the current frequency range sufficient for humpback-related exploration, or should it be expanded?
+- Should the score remain a simple spectrogram mean, or should alternative features be tested?
+- Should the final interface show score in raw form, normalized form, or bounded confidence form?
+- How should DAS activity be aggregated into the most interpretable visual representation?
+- What is the best practical way to combine hydrophone and DAS evidence in the MVP?
+
+## Recommended next direction
+The current recommendation is:
+
+- keep the current baseline detector as a practical candidate generator,
+- keep binary intervals for navigation,
+- expose a continuous event score over time,
+- treat hydrophone as a support layer,
+- make DAS the central visual layer,
+- move toward combined hydrophone + DAS evidence,
+- include source ground-truth position if possible,
+- and reflect cable sensitivity issues at least as contextual information in the visualization.
