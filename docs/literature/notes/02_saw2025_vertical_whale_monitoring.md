@@ -4,7 +4,8 @@
 Saw, J., Luo, L., Chu, K., Ryan, J., Soga, K., & Wu, Y. (2025).  
 *Distributed acoustic sensing for whale vocalization monitoring: A vertical deployment field test.*  
 Seismological Research Letters, 96(2A), 801–815.  
-https://doi.org/10.1785/0220240389
+https://escholarship.org/uc/item/3cg9t6fz
+
 
 ---
 
