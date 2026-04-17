@@ -1,4 +1,4 @@
-08 — Morell-Monzó et al. (2026): Multispectral Representation of DAS Data
+# 08 — Morell-Monzó et al. (2026): Multispectral Representation of DAS Data
 
 ## Citation
 
