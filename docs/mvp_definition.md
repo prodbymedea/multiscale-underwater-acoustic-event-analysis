@@ -42,6 +42,18 @@ The next practical MVP iteration should include:
 - continuous score/confidence-like event interpretation;
 - DAS activity visualization that is more interpretable than raw amplitude alone.
 
+## Technical structure of the MVP output
+
+The technical core output of the MVP is an interactive viewer in which the user can:
+- choose a shot,
+- choose a time interval,
+- inspect DAS activity over time,
+- inspect hydrophone support score,
+- view map-based spatial context,
+- and jump to candidate events.
+
+This technical structure is already defined conceptually and will guide the next implementation stage.
+
 ## Out of scope (explicitly not MVP)
 
 - Machine learning classification (species, vessel vs. whale, etc.).
