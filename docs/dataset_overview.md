@@ -64,6 +64,31 @@ Based on the current project exploration:
 - The dataset supports both temporal and spatial analysis.
 - `Situation.h5` provides the context needed for map-based synchronized visualization.
 
+## Practical dataset parameters
+
+Based on the current project exploration, the following practical parameters have been identified:
+
+- **DAS sampling rate:** approximately 5 kHz
+- **Hydrophone sampling rate:** approximately 50 kHz
+- **Number of DAS channels:** 946
+- **Hydrophone channels:** depends on available recorder; current examples use `Recorder-C`
+- **Coordinate system:** spatial context is provided in the dataset and used for map-based interpretation; cable and source positions are handled through the available geometry metadata
+- **Shot structure:** each selected shot `.h5` file includes:
+  - `DAS`
+  - `Source`
+  - `Recorder-*`
+- **Preview / processed representations:** DAS data are too large for direct visualization and therefore require downsampling or activity-based summarization
+
+## Metadata currently used in the project
+
+The current implementation uses metadata and attributes related to:
+- source timing,
+- source position,
+- recorder availability,
+- DAS and hydrophone sampling properties,
+- spatial context from `Situation.h5`,
+- shot identity and selected subset.
+
 ## Current project use of modalities
 At the current stage:
 
