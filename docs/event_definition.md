@@ -39,11 +39,9 @@ Other feature definitions may later be explored, including:
 ## Thresholding
 The current detector uses a robust threshold:
 
-\[
-\text{threshold} = \mathrm{median}(\text{scores}) + k \cdot 1.4826 \cdot \mathrm{MAD}(\text{scores})
-\]
+threshold = median(scores) + k × 1.4826 × MAD(scores)
 
-with default **k = 3**.
+with default k = 3.
 
 This threshold is currently used to convert a continuous score into candidate event intervals.
 
