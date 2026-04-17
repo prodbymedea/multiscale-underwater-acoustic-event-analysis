@@ -1,4 +1,4 @@
-# Rivet et al. (2021): Ship Detection Using Distributed Acoustic Sensing on Submarine Fiber Optic Cables
+# 04 — Rivet et al. (2021): Ship Detection Using Distributed Acoustic Sensing on Submarine Fiber Optic Cables
 
 ## Citation
 Rivet, D., de Cacqueray, B., Sladen, A., Doisy, Y., Roques, A., & Calbris, G. (2021).  
