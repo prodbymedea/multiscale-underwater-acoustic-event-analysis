@@ -60,6 +60,19 @@ The expected result is an interactive visual analysis prototype that combines:
 - and map-based spatial context
 
 for a selected subset of the Lake Zurich dataset.
+## Technical interpretation of the expected output
+
+The core output of the project is an interactive visual analysis viewer.
+
+In practical terms, this means that the user should be able to:
+- select a shot,
+- select a time interval,
+- view DAS activity over time,
+- view hydrophone-based support score over time,
+- inspect spatial context on the map,
+- and navigate to candidate events.
+
+This description represents the technical structure of the expected MVP output, even though the full viewer is not implemented yet.
 
 ## Transferability
 The current implementation is dataset-specific. Some design ideas may later be reusable for similar DAS datasets, but generalization is not the primary goal of this project.
