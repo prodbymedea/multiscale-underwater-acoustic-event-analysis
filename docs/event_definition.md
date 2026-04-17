@@ -117,6 +117,55 @@ This does not necessarily mean a hard joint detector in the first MVP. A more re
 
 This is important because an event may be visible on the hydrophone signal but weak or absent on DAS channels, or vice versa. Such differences are themselves informative and should not be hidden.
 
+## Linking detection score to DAS view
+At the current stage, the project does not use a single combined detection formula that merges hydrophone and DAS into one final probability value. Instead, the connection between detection score and DAS view is defined through **synchronized interpretation**.
+
+### Hydrophone score
+The hydrophone-derived score is used as:
+- a time-based guidance signal,
+- a support score over time,
+- and a practical way to identify intervals of increased acoustic activity.
+
+This score helps indicate **when** an event-like interval is likely to occur.
+
+### DAS view
+The DAS view is used as the **main visual layer** of the project.
+
+Its role is to show:
+- how activity appears along the cable,
+- how it evolves over time,
+- and how different parts of the fiber respond during the selected interval.
+
+This view helps indicate **where and how** the event-related activity is visible in DAS.
+
+### Relationship between the two
+The hydrophone score and the DAS view are linked through **shared time alignment**.
+
+In practice, this means:
+- the user inspects the same time interval across both modalities;
+- the hydrophone panel shows event score over time;
+- the DAS panel shows DAS activity along the cable over time;
+- when the hydrophone score increases, the user can immediately inspect how that interval is reflected in DAS.
+
+This allows the system to support event interpretation without requiring a hard combined detector at the current stage.
+
+### Why this approach is used
+This synchronized approach is appropriate for the current MVP because:
+- hydrophone data currently provide the most stable baseline timing cue;
+- DAS is the main target modality for visualization;
+- a hard combined detector would add unnecessary complexity at this stage;
+- the synchronized representation is already informative for event-oriented exploration.
+
+### Planned future direction
+A more explicit combination of hydrophone and DAS evidence may be added later.
+
+Possible future directions include:
+- DAS activity score over time,
+- comparison between hydrophone score and DAS score,
+- or a combined confidence-like representation.
+
+However, this is not required for the current MVP.
+
 ## DAS-centered event representation
 The final visual interpretation should therefore not be based only on hydrophone-derived event intervals.
 
