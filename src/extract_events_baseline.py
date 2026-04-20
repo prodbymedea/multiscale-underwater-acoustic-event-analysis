@@ -1,32 +1,30 @@
 #!/usr/bin/env python3
 """
-Baseline candidate event extraction (MVP, no ML).
+Baseline candidate acoustic-event extraction (MVP, no ML).
 
 Definition (practical baseline):
-  - Primary signal: hydrophone STFT already exported in spectrogram.json
-    (ingest uses Recorder-C, preview channel Tetra-Top).
-  - Activity score: mean PSD (dB) per time frame, restricted to a fixed
-    bioacoustic band (default 30–1500 Hz) to reduce broadband noise influence.
-  - Threshold: median(score) + k * (1.4826 * MAD) — robust to heavy-tailed noise.
-  - Events: merge STFT frames above threshold; allow small gaps (frames);
-    drop segments shorter than min_duration_s.
+  - Primary signal: hydrophone STFT exported in spectrogram.json.
+  - Frame score: mean PSD (dB) in a configurable frequency band
+    (default 30–1500 Hz).
+  - Threshold: median(score) + k * (1.4826 * MAD).
+  - Event intervals: merge neighboring active frames and remove short runs.
 
-DAS is optional supporting context only: for each event, report the fiber
-distance bin with largest sample std in das_preview over the event time
-(no detection on DAS).
+This detector is intentionally conservative and should be used as
+candidate-guidance for synchronized viewer navigation (not whale classification).
 
-Output: events.json next to ingest JSON (or --out path).
-
-Usage (from repository root; requires spectrogram.json from ingest):
-  python3 src/extract_events_baseline.py
-  python3 src/extract_events_baseline.py --shot-dir output/shots/whales_humpback
-  python3 src/extract_events_baseline.py --mad-k 3.0 --fmin 30 --fmax 1500
+Extra Sprint 2 outputs:
+  - hydrophone_event_score.npz
+  - hydrophone_event_score_metadata.json
+  - hydrophone_event_score.png
+  - score_with_events.png
+  - viewer_event_guidance.json
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -34,12 +32,32 @@ import numpy as np
 
 from _repo_paths import REPO_ROOT
 
+# Make matplotlib cache writable in constrained environments.
+_mpl_cfg = REPO_ROOT / ".mplconfig"
+_mpl_cfg.mkdir(exist_ok=True)
+os.environ.setdefault("MPLCONFIGDIR", str(_mpl_cfg))
+
+import matplotlib
+
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
+
 
 def _mad_threshold(scores: np.ndarray, k: float) -> float:
     med = float(np.median(scores))
     mad = float(np.median(np.abs(scores - med)))
     sigma = 1.4826 * mad if mad > 1e-12 else float(np.std(scores)) or 1.0
     return med + k * sigma
+
+
+def _robust_normalize_01(scores: np.ndarray, p_low: float, p_high: float) -> tuple[np.ndarray, dict[str, float]]:
+    if not (0 <= p_low < p_high <= 100):
+        raise ValueError(f"Invalid normalization percentiles p_low={p_low}, p_high={p_high}")
+    lo = float(np.percentile(scores, p_low))
+    hi = float(np.percentile(scores, p_high))
+    denom = hi - lo if hi > lo else 1.0
+    norm = np.clip((scores - lo) / denom, 0.0, 1.0)
+    return norm.astype(np.float32), {"p_low": p_low, "p_high": p_high, "lo": lo, "hi": hi}
 
 
 def _true_runs(mask: np.ndarray) -> list[tuple[int, int]]:
@@ -144,6 +162,96 @@ def extract_events(
     return events
 
 
+def _plot_hydro_score(
+    t: np.ndarray,
+    raw_score: np.ndarray,
+    norm_score: np.ndarray,
+    threshold: float,
+    events: list[dict[str, Any]],
+    shot_id: str,
+    out_png_1: Path,
+    out_png_2: Path,
+) -> None:
+    # Figure 1: compact normalized support score + event intervals
+    fig1, ax1 = plt.subplots(figsize=(10, 3.8))
+    ax1.plot(t, norm_score, lw=1.2, color="tab:blue", label="Normalized hydrophone support score")
+    for ev in events:
+        ax1.axvspan(ev["start_time_s"], ev["end_time_s"], color="tab:red", alpha=0.18)
+    ax1.set_title(f"Hydrophone support score over time — {shot_id}")
+    ax1.set_xlabel("Time (s)")
+    ax1.set_ylabel("Normalized score [0, 1]")
+    ax1.set_ylim(-0.02, 1.02)
+    ax1.grid(alpha=0.25)
+    ax1.legend(loc="upper right", fontsize=8)
+    fig1.tight_layout()
+    fig1.savefig(out_png_1, dpi=120)
+    plt.close(fig1)
+
+    # Figure 2: raw score with threshold + normalized score
+    fig2, axs = plt.subplots(2, 1, figsize=(10.5, 6.5), sharex=True, constrained_layout=True)
+    axs[0].plot(t, raw_score, lw=1.0, color="tab:purple", label="Raw hydrophone score (mean dB in band)")
+    axs[0].axhline(threshold, color="tab:red", linestyle="--", lw=1.2, label=f"Threshold ({threshold:.2f} dB)")
+    for ev in events:
+        axs[0].axvspan(ev["start_time_s"], ev["end_time_s"], color="tab:red", alpha=0.15)
+    axs[0].set_ylabel("Score (dB)")
+    axs[0].set_title(f"Hydrophone score + detected candidate intervals — {shot_id}")
+    axs[0].grid(alpha=0.25)
+    axs[0].legend(loc="upper right", fontsize=8)
+
+    axs[1].plot(t, norm_score, lw=1.0, color="tab:blue")
+    for ev in events:
+        axs[1].axvspan(ev["start_time_s"], ev["end_time_s"], color="tab:red", alpha=0.15)
+    axs[1].set_xlabel("Time (s)")
+    axs[1].set_ylabel("Normalized [0, 1]")
+    axs[1].set_ylim(-0.02, 1.02)
+    axs[1].grid(alpha=0.25)
+    axs[1].set_title("Normalized hydrophone support score")
+    fig2.savefig(out_png_2, dpi=120)
+    plt.close(fig2)
+
+
+def _load_das_activity_alignment(shot_dir: Path, t_hydro: np.ndarray) -> dict[str, Any]:
+    p = shot_dir / "das_activity_map.npz"
+    if not p.is_file():
+        return {
+            "das_activity_found": False,
+            "hydro_time_range_s": [float(t_hydro[0]), float(t_hydro[-1])],
+            "notes": "das_activity_map.npz not found; alignment metadata unavailable",
+        }
+    z = np.load(p)
+    if "t_windows_s" not in z:
+        return {
+            "das_activity_found": True,
+            "hydro_time_range_s": [float(t_hydro[0]), float(t_hydro[-1])],
+            "notes": "das_activity_map.npz has no t_windows_s",
+        }
+    t_das = np.asarray(z["t_windows_s"], dtype=np.float64)
+    h0, h1 = float(t_hydro[0]), float(t_hydro[-1])
+    d0, d1 = float(t_das[0]), float(t_das[-1])
+    ov0, ov1 = max(h0, d0), min(h1, d1)
+    overlap = ov1 >= ov0
+    hydro_dt = float(np.median(np.diff(t_hydro))) if len(t_hydro) > 1 else None
+    das_dt = float(np.median(np.diff(t_das))) if len(t_das) > 1 else None
+    nearest_sec = None
+    if overlap and hydro_dt and das_dt:
+        # simple mapping ratio hint; exact reindexing is deferred.
+        nearest_sec = float(max(hydro_dt, das_dt))
+    return {
+        "das_activity_found": True,
+        "hydro_time_range_s": [h0, h1],
+        "das_activity_time_range_s": [d0, d1],
+        "time_overlap": bool(overlap),
+        "overlap_time_range_s": [ov0, ov1] if overlap else None,
+        "hydro_dt_s": hydro_dt,
+        "das_activity_dt_s": das_dt,
+        "nearest_mapping_time_tolerance_s": nearest_sec,
+        "notes": (
+            "Hydrophone support score indicates when to inspect; "
+            "DAS activity map indicates where/how along cable."
+        ),
+    }
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Baseline hydrophone spectrogram event candidates")
     ap.add_argument(
@@ -159,6 +267,8 @@ def main() -> None:
     ap.add_argument("--max-gap-frames", type=int, default=2, help="Merge active runs if gap ≤ this")
     ap.add_argument("--min-duration-s", type=float, default=0.25)
     ap.add_argument("--out", type=Path, default=None, help="events.json path (default: shot-dir/events.json)")
+    ap.add_argument("--score-p-low", type=float, default=5.0, help="Lower percentile for score normalization")
+    ap.add_argument("--score-p-high", type=float, default=99.0, help="Upper percentile for score normalization")
     args = ap.parse_args()
 
     shot_dir: Path = args.shot_dir
@@ -176,6 +286,8 @@ def main() -> None:
 
     t, scores, _band_freqs = band_limited_scores(spec_block, args.fmin, args.fmax)
     threshold = _mad_threshold(scores, args.mad_k)
+    score_norm, score_norm_meta = _robust_normalize_01(scores, args.score_p_low, args.score_p_high)
+    active_mask = scores > threshold
     raw_events = extract_events(
         t,
         scores,
@@ -197,8 +309,16 @@ def main() -> None:
             das_preview = json.load(f)
 
     out_events: list[dict[str, Any]] = []
+    score_file_rel = "hydrophone_event_score.npz"
     for i, ev in enumerate(raw_events, start=1):
         t0, t1 = ev["start_time_s"], ev["end_time_s"]
+        idx = np.where((t >= t0) & (t <= t1))[0]
+        if idx.size == 0:
+            idx = np.array([int(ev["start_idx"])], dtype=np.int32)
+        local_scores = scores[idx]
+        local_norm = score_norm[idx]
+        peak_local = int(np.argmax(local_scores))
+        peak_idx = int(idx[peak_local])
         row: dict[str, Any] = {
             "event_id": f"{shot_id}_{i:03d}",
             "shot_id": shot_id,
@@ -206,6 +326,13 @@ def main() -> None:
             "end_time_s": t1,
             "duration_s": round(ev["duration_s"], 4),
             "score": round(ev["score"], 3),
+            "mean_score": round(float(np.mean(local_scores)), 3),
+            "peak_time_s": float(t[peak_idx]),
+            "peak_score": float(np.max(local_scores)),
+            "max_normalized_score": float(np.max(local_norm)),
+            "threshold": float(threshold),
+            "frequency_band_hz": [float(args.fmin), float(args.fmax)],
+            "source_score_file": score_file_rel,
             "detection_basis": (
                 f"hydrophone STFT mean dB ({args.fmin:.0f}-{args.fmax:.0f} Hz), "
                 f"{recorder}/{spec_block.get('preview_channel', '?')}; "
@@ -240,6 +367,10 @@ def main() -> None:
             "mad_k": args.mad_k,
             "threshold_db": round(threshold, 4),
             "score_definition": "mean Sxx_db over frequency bins in band, per STFT frame",
+            "score_normalization": {
+                "method": "robust percentile normalization to [0,1]",
+                **score_norm_meta,
+            },
             "max_gap_frames": args.max_gap_frames,
             "min_duration_s": args.min_duration_s,
         },
@@ -252,8 +383,100 @@ def main() -> None:
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
+    # Score export (compact NPZ + metadata)
+    score_npz_path = shot_dir / score_file_rel
+    np.savez_compressed(
+        score_npz_path,
+        t_s=t.astype(np.float32),
+        raw_score=scores.astype(np.float32),
+        normalized_event_score=score_norm.astype(np.float32),
+        active_mask=active_mask.astype(np.uint8),
+    )
+    alignment = _load_das_activity_alignment(shot_dir, t_hydro=t)
+    score_meta = {
+        "schema_version": "hydrophone_event_score_v1",
+        "shot_id": shot_id,
+        "source_h5": h5_name,
+        "support_layer_note": (
+            "Hydrophone event score is a support/timing layer for synchronized interpretation. "
+            "It is not whale probability and not species classification."
+        ),
+        "source_files": {
+            "spectrogram": str(spec_path.resolve()),
+            "events_json": str(out_path.resolve()),
+            "das_activity_map_npz": str((shot_dir / "das_activity_map.npz").resolve())
+            if (shot_dir / "das_activity_map.npz").is_file()
+            else None,
+        },
+        "detector": {
+            "recorder": recorder,
+            "preview_channel": spec_block.get("preview_channel"),
+            "frequency_band_hz": [float(args.fmin), float(args.fmax)],
+            "threshold_method": "median + k * (1.4826 * MAD)",
+            "mad_k": float(args.mad_k),
+            "threshold_db": float(threshold),
+            "max_gap_frames": int(args.max_gap_frames),
+            "min_duration_s": float(args.min_duration_s),
+        },
+        "score_arrays": {
+            "t_s_len": int(len(t)),
+            "raw_score": "mean Sxx_db over selected frequency bins",
+            "normalized_event_score": "robust percentile normalized score in [0,1]",
+            "normalization": score_norm_meta,
+            "active_mask_definition": "raw_score > threshold_db",
+        },
+        "time_alignment_with_das_activity": alignment,
+        "n_candidate_events": int(len(out_events)),
+    }
+    score_meta_path = shot_dir / "hydrophone_event_score_metadata.json"
+    with open(score_meta_path, "w", encoding="utf-8") as f:
+        json.dump(score_meta, f, indent=2, ensure_ascii=False)
+
+    # Compact viewer guidance bundle
+    guidance = {
+        "schema_version": "viewer_event_guidance_v1",
+        "shot_id": shot_id,
+        "n_events": len(out_events),
+        "events_json": str(out_path.resolve()),
+        "score_file_npz": str(score_npz_path.resolve()),
+        "score_metadata_json": str(score_meta_path.resolve()),
+        "das_activity_map_npz": str((shot_dir / "das_activity_map.npz").resolve())
+        if (shot_dir / "das_activity_map.npz").is_file()
+        else None,
+        "time_alignment_with_das_activity": alignment,
+        "recommended_default_interval_s": None,
+    }
+    if out_events:
+        first = out_events[0]
+        center = 0.5 * (first["start_time_s"] + first["end_time_s"])
+        guidance["recommended_default_interval_s"] = [max(0.0, center - 2.0), center + 2.0]
+    guidance_path = shot_dir / "viewer_event_guidance.json"
+    with open(guidance_path, "w", encoding="utf-8") as f:
+        json.dump(guidance, f, indent=2, ensure_ascii=False)
+
+    # Diagnostic figures
+    fig_dir = REPO_ROOT / "figures" / "shots" / shot_id
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    fig1 = fig_dir / "hydrophone_event_score.png"
+    fig2 = fig_dir / "score_with_events.png"
+    _plot_hydro_score(
+        t=t,
+        raw_score=scores,
+        norm_score=score_norm,
+        threshold=threshold,
+        events=out_events,
+        shot_id=shot_id,
+        out_png_1=fig1,
+        out_png_2=fig2,
+    )
+
     print(f"Threshold (dB): {threshold:.3f}")
     print(f"Wrote {len(out_events)} events → {out_path}")
+    print(f"Wrote score npz → {score_npz_path}")
+    print(f"Wrote score metadata → {score_meta_path}")
+    print(f"Wrote viewer guidance → {guidance_path}")
+    print(f"Wrote figure → {fig1}")
+    print(f"Wrote figure → {fig2}")
 
 
 if __name__ == "__main__":

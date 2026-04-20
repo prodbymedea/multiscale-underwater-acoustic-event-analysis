@@ -78,6 +78,9 @@ This contains map-ready spatial context derived from `Situation.h5`.
 
 ### Event output
 - `events.json`
+- `hydrophone_event_score.npz`
+- `hydrophone_event_score_metadata.json`
+- `viewer_event_guidance.json`
 
 This contains baseline candidate event intervals and associated fields such as timing, score, and support information.
 

@@ -91,6 +91,13 @@ python src/screen_shots.py
 python src/extract_events_baseline.py --shot-dir output/shots/whales_humpback
 ```
 
+The baseline detector also exports a compact support-score bundle:
+
+- `hydrophone_event_score.npz`
+- `hydrophone_event_score_metadata.json`
+- `viewer_event_guidance.json`
+- score diagnostics under `figures/shots/<slug>/`
+
 **DAS preprocessing preview (Sprint 2 backend, Whales shots):**
 
 ```bash
@@ -103,6 +110,13 @@ python src/preprocess_das.py --shot whales_orca
 ```bash
 python src/build_das_activity_map.py --shot whales_humpback
 python src/build_das_activity_map.py --shot whales_orca
+```
+
+**Viewer-readiness check (Whales shots):**
+
+```bash
+python src/check_viewer_ready.py
+python src/check_viewer_ready.py --shot whales_humpback
 ```
 
 ## Planned GitHub Pages deployment
