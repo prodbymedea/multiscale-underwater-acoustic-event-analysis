@@ -11,10 +11,11 @@
 
 - HDF5 → JSON **ingest/export** for previews and summaries.
 - **Matplotlib** quick-look plots (including robust / normalized DAS scaling).
-- **Shot screening** (Humpback, Orca, Morning) with per-shot figures.
+- **Shot screening** (Humpback, Orca; Morning kept as historical reserve) with per-shot figures.
 - **Baseline candidate events** from hydrophone spectrogram activity (MAD thresholding), with optional DAS hints — **no ML**.
+- **Sprint 2 backend:** Whales-subset DAS preprocessing prototype for cleaner DAS activity representations before rolling-RMS maps.
 
-Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_definition.md`.
+Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_definition.md`, `docs/das_preprocessing_decision.md`.
 
 ## Repository layout
 
@@ -37,6 +38,7 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 | `src/visualize_export.py` | Plot exports (DAS linear/robust/normalized, waveform, spectrogram, map) |
 | `src/screen_shots.py` | Batch ingest + plots for configured shots → `output/shots/<slug>/`, `figures/shots/<slug>/` |
 | `src/extract_events_baseline.py` | Baseline `events.json` from `spectrogram.json` (+ optional `das_preview.json`) |
+| `src/preprocess_das.py` | Whales-only DAS preprocessing preview (`.npz` + metadata + raw/preprocessed comparison figures) |
 
 ## Notes on data
 
@@ -47,7 +49,8 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 
 - **Primary MVP shot:** `whales_humpback` — `2022-01-26--04-46-16--Humpback.h5`.
 - **Secondary:** `whales_orca` — `2022-01-26--04-47-42--Orca.h5`.
-- **Reserve:** `morning_00` — `2022-01-26--03-57-10--00.h5`.
+- **Reserve (documented only):** `morning_00` — `2022-01-26--03-57-10--00.h5`.
+- **Current Sprint 2 implementation focus:** Whales subset only (`whales_humpback`, `whales_orca`).
 
 ## Project status
 
@@ -85,6 +88,13 @@ python src/screen_shots.py
 
 ```bash
 python src/extract_events_baseline.py --shot-dir output/shots/whales_humpback
+```
+
+**DAS preprocessing preview (Sprint 2 backend, Whales shots):**
+
+```bash
+python src/preprocess_das.py --shot whales_humpback
+python src/preprocess_das.py --shot whales_orca
 ```
 
 ## Planned GitHub Pages deployment
