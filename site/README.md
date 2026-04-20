@@ -1,80 +1,80 @@
-# Static site (Sprint 2 - Frontend Step 5 skeleton)
+# Static site (Sprint 2 - Frontend Step 6 synchronized views)
 
-This directory now contains the initial static website skeleton for the thesis demo viewer.
+This directory contains the frontend synchronized viewer for the thesis MVP scope.
 
 ## Current contents
 
-- `index.html`: viewer page structure and layout regions.
-- `styles.css`: static responsive styling (DAS panel visually primary).
-- `app.js`: lightweight metadata loading and UI state wiring.
+- `index.html`: existing layout with synchronized render containers.
+- `styles.css`: dark scientific UI theme and panel/component styling.
+- `app.js`: synchronized interval handling, panel rendering, playback, and event navigation.
 
-## What the skeleton includes
+## Implemented synchronized views
 
-- Header with project/demo title and Whales-subset MVP subtitle.
-- Shot selector.
-- Interval selector (`start` / `end` seconds).
-- Playback controls (`Play` / `Pause`) with visible state text.
-- Main layout panels:
-	- DAS activity panel (primary, largest panel).
-	- Hydrophone support panel (secondary).
-	- Map/spatial context panel.
-	- Sidebar metadata/event summary.
+The same selected interval (`start` / `end`) now drives all three panels:
 
-## Metadata loading behavior
+- DAS activity view (primary panel):
+	- renders `viewer/das_activity.json` heatmap when available,
+	- shows shared interval and shared playback cursor,
+	- falls back to metadata mode when DAS export is unavailable.
+- Hydrophone support view:
+	- renders score timeline from `hydrophone_activity.json` when available,
+	- overlays selected interval and candidate event spans,
+	- falls back to interval + event guidance mode when timeline is unavailable.
+- Map/spatial context view:
+	- renders source/recorder positions from `shot_metadata.json`, `recorders_summary.json`, and manifest source ground truth,
+	- displays synchronized interval context,
+	- falls back to metadata-only mode when spatial coordinates are unavailable.
 
-The frontend tries to load viewer-oriented outputs in this order:
+## Synchronization behavior
 
-1. `../output/viewer_index.json` (preferred if present)
-2. `./data/viewer_index.json`
-3. `output/viewer_index.json`
+- Shot selector updates all panels and metadata.
+- Interval input updates all panels immediately.
+- Playback controls are intentionally de-emphasized in Step 6; the viewer keeps a static shared cursor and defers full playback behavior to later steps.
+- Candidate events are shown as navigation chips in the sidebar.
+- Clicking an event chip snaps interval and cursor to that event.
 
-If no viewer index is found, it falls back to shot IDs:
+## Data loading behavior
 
-- `whales_humpback`
-- `whales_orca`
+### Full bundle mode (preferred)
 
-For each selected shot, it tries to load:
+For each selected shot, frontend attempts to load:
 
-- `../output/shots/<shot_id>/viewer_manifest.json` (and equivalent fallback bases)
+- `../output/shots/<shot_id>/viewer_manifest.json`
+- files listed in manifest (`shot_metadata`, `recorders_summary`, `events`, `hydrophone_activity`, `das_activity`, `situation`)
 
-When manifest data are available, the sidebar shows:
+### Fallback mode
 
-- selected shot id,
-- available time range,
-- recommended default interval,
-- event count,
-- source ground-truth availability,
-- manifest file-key summary.
+If full viewer manifest is missing, frontend attempts:
 
-Event count is read from manifest if available, otherwise the app tries to read the `events.json` file referenced by `manifest.files.events`.
+- `../output_samples/shots/<shot_id>/shot_metadata.json`
+- `../output_samples/shots/<shot_id>/recorders_summary.json`
+- `../output_samples/shots/<shot_id>/events.json`
 
-## Placeholders by design (deferred)
+Fallback mode keeps synchronized interval/events but uses metadata-driven placeholders for unavailable full exports.
 
-This step is a frontend scaffold only. The following are intentionally placeholders:
+## Known simplifications
 
-- DAS heatmap rendering pipeline.
-- Hydrophone support plot rendering.
-- Map rendering (fiber/source/bathymetry drawing).
-- Full playback timeline animation and synchronized cursoring.
-- Browser adapters for `.npz` assets.
+- Browser-side `.npz` parsing is not used in this step.
+- DAS and hydro panels depend on JSON viewer exports (`viewer/das_activity.json`, `hydrophone_activity.json`).
+- Map panel currently renders lightweight source/recorder context, not full bathymetry/fiber-track geometry rendering.
 
 ## Local testing
 
-Use a local static server from repository root (recommended, avoids `file://` fetch restrictions):
+Run a static server from repository root:
 
 ```bash
 python -m http.server 8000
 ```
 
-Then open:
+Open:
 
 - `http://localhost:8000/site/`
 
-If opened directly via `file://`, browser security policies may block JSON fetches and the app will run in fallback/placeholder mode.
+Avoid `file://` opening because browser fetch restrictions can block local JSON loading.
 
 ## Scope notes
 
-- Frontend-only change for Sprint 2 Step 5.
-- No backend script updates.
-- No ML/classification logic.
-- Whales subset focus for the viewer skeleton.
+- Frontend-only update for Sprint 2 Step 6.
+- Backend scripts and output generation are unchanged.
+- No ML, no whale classification logic.
+- Whales subset focus (`whales_humpback`, `whales_orca`).

@@ -58,6 +58,14 @@ def _rel(path: Path) -> str:
         return str(path)
 
 
+def _shot_rel(shot_dir: Path, path: Path) -> str:
+    """Return path relative to the shot directory for frontend file loading."""
+    try:
+        return str(path.resolve().relative_to(shot_dir.resolve()))
+    except Exception:
+        return path.name
+
+
 def _time_range_from_npz(npz_path: Path, key: str) -> list[float] | None:
     if not npz_path.is_file():
         return None
@@ -237,6 +245,14 @@ def build_manifest(shot: str) -> dict[str, Any]:
             "recorders_in_summary": recorder_names,
         },
         "files": {
+            # Frontend compatibility keys (site/app.js) with shot-relative paths.
+            "shot_metadata": _shot_rel(shot_dir, shot_meta_p),
+            "recorders_summary": _shot_rel(shot_dir, rec_p),
+            "events": _shot_rel(shot_dir, events_p),
+            "situation": _shot_rel(shot_dir, sit_p),
+            "hydrophone_activity": _shot_rel(shot_dir, shot_dir / "hydrophone_activity.json"),
+            "das_activity": _shot_rel(shot_dir, shot_dir / "viewer" / "das_activity.json"),
+            # Current compact-manifest keys retained for backend/docs compatibility.
             "events_file": _rel(events_p),
             "das_activity_map_file": _rel(das_npz_p),
             "das_activity_metadata_file": _rel(das_meta_p),
