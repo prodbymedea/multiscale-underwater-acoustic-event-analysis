@@ -1,4 +1,4 @@
-# Static site (Sprint 2 - Frontend Step 6 synchronized views)
+# Static site (Sprint 2 - Frontend Steps 6-7 synchronized views)
 
 This directory contains the frontend synchronized viewer for the thesis MVP scope.
 
@@ -28,10 +28,29 @@ The same selected interval (`start` / `end`) now drives all three panels:
 ## Synchronization behavior
 
 - Shot selector updates all panels and metadata.
-- Interval input updates all panels immediately.
+- Interval input supports explicit apply/reset controls and clamps to valid shot bounds.
 - Playback controls are intentionally de-emphasized in Step 6; the viewer keeps a static shared cursor and defers full playback behavior to later steps.
 - Candidate events are shown as navigation chips in the sidebar.
 - Clicking an event chip snaps interval and cursor to that event.
+
+## Step 7 interval interaction workflow
+
+- Interval selection:
+	- set start/end seconds in controls,
+	- click "Apply interval" (or press Enter in either input),
+	- values are clamped to available time range and synchronized across DAS/hydro/map/sidebar.
+- Candidate event navigation:
+	- event chips are clickable,
+	- clicking a chip updates interval around the event and moves shared cursor to event center,
+	- active event (at cursor time) is shown in the sidebar.
+- Synchronized cursor movement:
+	- click inside DAS heatmap to move shared cursor,
+	- click inside hydrophone view to move shared cursor,
+	- lightweight drag-to-seek is supported in DAS and hydro views.
+- Interactive feedback:
+	- current interval and cursor time are always visible,
+	- active event updates as cursor moves,
+	- all panels re-render immediately when interval/cursor changes.
 
 ## Data loading behavior
 
