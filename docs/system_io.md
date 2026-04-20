@@ -66,6 +66,8 @@ These describe shot-level properties, available sensors, and basic metadata.
 - `spectrogram.json`
 - `waveform.json`
 - `das_preview.json`
+- `das_preprocessed_preview.npz`
+- `das_activity_map.npz`
 
 These provide compact visual-analysis-friendly representations of the raw data.
 
@@ -157,5 +159,6 @@ At the current stage, the system already supports:
 - quick inspection,
 - shot screening,
 - and baseline candidate-event generation.
+- and normalized rolling-RMS DAS activity map generation for Whales shots.
 
 The next implementation stage should focus on transforming these outputs into a synchronized time-based viewer.

@@ -39,6 +39,7 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 | `src/screen_shots.py` | Batch ingest + plots for configured shots → `output/shots/<slug>/`, `figures/shots/<slug>/` |
 | `src/extract_events_baseline.py` | Baseline `events.json` from `spectrogram.json` (+ optional `das_preview.json`) |
 | `src/preprocess_das.py` | Whales-only DAS preprocessing preview (`.npz` + metadata + raw/preprocessed comparison figures) |
+| `src/build_das_activity_map.py` | Build normalized rolling RMS DAS activity map (`das_activity_map.npz` + metadata + quick-look PNGs) |
 
 ## Notes on data
 
@@ -95,6 +96,13 @@ python src/extract_events_baseline.py --shot-dir output/shots/whales_humpback
 ```bash
 python src/preprocess_das.py --shot whales_humpback
 python src/preprocess_das.py --shot whales_orca
+```
+
+**DAS activity representation (rolling RMS map from preprocessed DAS):**
+
+```bash
+python src/build_das_activity_map.py --shot whales_humpback
+python src/build_das_activity_map.py --shot whales_orca
 ```
 
 ## Planned GitHub Pages deployment
