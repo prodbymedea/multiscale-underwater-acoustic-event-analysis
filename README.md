@@ -119,6 +119,13 @@ python src/check_viewer_ready.py
 python src/check_viewer_ready.py --shot whales_humpback
 ```
 
+**Viewer bundle manifests (Whales shots):**
+
+```bash
+python src/build_viewer_bundle.py
+python src/build_viewer_bundle.py --shot whales_humpback
+```
+
 ## Planned GitHub Pages deployment
 
 - **Target:** publish the static content under **`site/`** (e.g. `index.html` and future assets) via [GitHub Pages](https://pages.github.com/) (branch/folder settings in the repo **Settings → Pages**).
