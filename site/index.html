@@ -3,17 +3,120 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>DASLakeZurich MVP — demo placeholder</title>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
-      code { background: #f4f4f4; padding: 0.1em 0.35em; border-radius: 4px; }
-    </style>
+    <title>DASLakeZurich Whales MVP Viewer Skeleton</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <h1>DASLakeZurich MVP</h1>
-    <p>
-      Placeholder page for a future <strong>GitHub Pages</strong> deployment. The current MVP is
-      Python-only: see the repository <code>README.md</code> and <code>docs/</code>.
-    </p>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+
+    <header class="page-header">
+      <h1>Multiscale Underwater Acoustic Viewer</h1>
+      <p>
+        DAS-centered thesis MVP skeleton for the Whales subset
+        <span class="subset-pill">whales_humpback + whales_orca</span>
+      </p>
+    </header>
+
+    <main class="app-shell">
+      <section class="control-bar" aria-label="Viewer controls">
+        <div class="control-group">
+          <label for="shot-select">Shot</label>
+          <select id="shot-select" aria-label="Select shot"></select>
+        </div>
+
+        <div class="control-group interval-group">
+          <label>Interval (seconds)</label>
+          <div class="interval-inputs">
+            <label for="interval-start" class="sr-only">Interval start</label>
+            <input id="interval-start" type="number" step="0.1" min="0" placeholder="Start" />
+            <span>to</span>
+            <label for="interval-end" class="sr-only">Interval end</label>
+            <input id="interval-end" type="number" step="0.1" min="0" placeholder="End" />
+          </div>
+        </div>
+
+        <div class="control-group playback-group">
+          <label>Playback</label>
+          <div class="playback-controls">
+            <button id="play-btn" type="button">Play</button>
+            <button id="pause-btn" type="button">Pause</button>
+            <span id="playback-status" class="playback-status">Idle</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="layout-grid" aria-label="Main visualization layout">
+        <article class="panel panel-das" aria-labelledby="das-heading">
+          <h2 id="das-heading">DAS Activity View (Primary)</h2>
+          <div id="das-view" class="panel-placeholder">
+            Placeholder container for normalized rolling RMS DAS activity map.
+          </div>
+        </article>
+
+        <article class="panel panel-hydro" aria-labelledby="hydro-heading">
+          <h2 id="hydro-heading">Hydrophone Support View</h2>
+          <div id="hydrophone-view" class="panel-placeholder">
+            Placeholder for hydrophone support score over time.
+          </div>
+        </article>
+
+        <article class="panel panel-map" aria-labelledby="map-heading">
+          <h2 id="map-heading">Spatial / Map Context</h2>
+          <div id="map-view" class="panel-placeholder">
+            Placeholder for cable, source, and bathymetry context.
+          </div>
+        </article>
+
+        <aside class="panel panel-sidebar" aria-labelledby="meta-heading">
+          <h2 id="meta-heading">Shot & Event Summary</h2>
+          <dl class="meta-list">
+            <div>
+              <dt>Selected shot</dt>
+              <dd id="meta-shot">-</dd>
+            </div>
+            <div>
+              <dt>Available time range</dt>
+              <dd id="meta-time-range">-</dd>
+            </div>
+            <div>
+              <dt>Recommended interval</dt>
+              <dd id="meta-recommended">-</dd>
+            </div>
+            <div>
+              <dt>Current interval</dt>
+              <dd id="meta-current-interval">-</dd>
+            </div>
+            <div>
+              <dt>Event count</dt>
+              <dd id="meta-event-count">-</dd>
+            </div>
+            <div>
+              <dt>Source ground truth</dt>
+              <dd id="meta-ground-truth">-</dd>
+            </div>
+            <div>
+              <dt>Manifest files</dt>
+              <dd id="meta-manifest-files">-</dd>
+            </div>
+            <div>
+              <dt>Event navigation</dt>
+              <dd class="placeholder-note">Placeholder list for candidate event jumps.</dd>
+            </div>
+          </dl>
+          <p id="data-status" class="data-status">
+            Loading viewer metadata...
+          </p>
+        </aside>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
   </body>
 </html>

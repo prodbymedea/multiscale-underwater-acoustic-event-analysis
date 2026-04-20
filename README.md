@@ -27,7 +27,7 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 | `figures/shots/whales_humpback/` | Committed demo PNGs (primary shot) |
 | `figures/shots/whales_orca/` | Committed demo PNGs (secondary; large spectrogram PNG excluded via `.gitignore`) |
 | `output_samples/shots/` | Small JSON samples (`shot_metadata`, `recorders_summary`, `events`) — **no** multi‑MB exports |
-| `site/` | Placeholder for a future **GitHub Pages** static demo |
+| `site/` | Static frontend skeleton for the future **GitHub Pages** viewer demo |
 | `output/` | Full ingest outputs (**gitignored**; create locally after download) |
 
 ## Scripts (implemented)
@@ -56,7 +56,7 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 ## Project status
 
 - Ingest/export, visualization, screening, and baseline event JSON: **working** (Python 3.10+ recommended; tested with 3.13).
-- Frontend / GitHub Pages demo: **not started** (`site/` placeholder only).
+- Frontend / GitHub Pages demo: **initial static skeleton implemented** under `site/` (layout + metadata wiring + placeholder panels).
 
 ## How to run
 
