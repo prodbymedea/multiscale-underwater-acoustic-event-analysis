@@ -1,6 +1,8 @@
 const SHOT_FALLBACK = ["whales_humpback", "whales_orca"];
 const OUTPUT_BASE_CANDIDATES = ["../output", "./data", "output"];
 const SAMPLE_BASE_CANDIDATES = ["../output_samples", "output_samples"];
+const MAP_TIMELINE_PLAY_SPEED_S = 120;
+const TRACK_PALETTE = ["#72f6ff", "#ff9f1c", "#9cff57", "#ffe66d", "#c9a0ff", "#ff7a59"];
 
 const state = {
   indexSource: null,
@@ -23,6 +25,15 @@ const state = {
     hydro: null,
     map: null
   },
+  mapTimeline: {
+    mode: "full",
+    time: 0,
+    playing: false,
+    extent: {
+      start: 0,
+      end: 30
+    }
+  },
   hoverFrame: 0,
   hoverEvent: null,
   hoverTarget: null,
@@ -36,6 +47,8 @@ const state = {
   mainRenderFrame: 0,
   mapRenderFrame: 0,
   mapZoomFrame: 0,
+  mapTimelinePlayFrame: 0,
+  mapTimelineLastTickMs: 0,
   lastStatusMessage: null
 };
 
@@ -63,6 +76,12 @@ const el = {
   mapSvg: document.getElementById("map-svg"),
   mapCaption: document.getElementById("map-caption"),
   mapControls: document.getElementById("map-controls"),
+  mapModeFull: document.getElementById("map-mode-full"),
+  mapModeTime: document.getElementById("map-mode-time"),
+  mapTimePlay: document.getElementById("map-time-play"),
+  mapTimeSlider: document.getElementById("map-time-slider"),
+  mapTimeValue: document.getElementById("map-time-value"),
+  mapTimeNote: document.getElementById("map-time-note"),
   mapView: document.getElementById("map-view"),
   eventNav: document.getElementById("event-nav"),
   hoverTooltip: document.getElementById("hover-tooltip")
@@ -132,9 +151,9 @@ function animateMapZoom() {
     state.mapZoomFrame = 0;
     const current = state.mapViewport.zoom;
     const target = state.mapViewport.targetZoom;
-    const next = current + (target - current) * 0.22;
+    const next = current + (target - current) * 0.16;
 
-    if (Math.abs(next - target) < 0.0025) {
+    if (Math.abs(next - target) < 0.0018) {
       state.mapViewport.zoom = target;
       scheduleMapRender();
       return;
@@ -329,6 +348,179 @@ function getTimeExtentFromShotBundle(bundle) {
   }
 
   return { start: 0, end: 30 };
+}
+
+function getMapTimelineExtentFromSituation(bundle) {
+  const tracks = bundle?.situation?.boat_tracks?.tracks;
+  let start = Infinity;
+  let end = -Infinity;
+
+  Object.values(tracks || {}).forEach((trackPoints) => {
+    if (!Array.isArray(trackPoints)) {
+      return;
+    }
+    trackPoints.forEach((pt) => {
+      const time = Number(pt?.t);
+      if (!Number.isFinite(time)) {
+        return;
+      }
+      if (time < start) start = time;
+      if (time > end) end = time;
+    });
+  });
+
+  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+    return { start, end };
+  }
+
+  const fiberPoints = bundle?.situation?.fiber_track?.segments?.all;
+  start = Infinity;
+  end = -Infinity;
+  if (Array.isArray(fiberPoints)) {
+    fiberPoints.forEach((pt) => {
+      const time = Number(pt?.t);
+      if (!Number.isFinite(time)) {
+        return;
+      }
+      if (time < start) start = time;
+      if (time > end) end = time;
+    });
+  }
+
+  if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+    return { start, end };
+  }
+
+  return { start: 0, end: 30 };
+}
+
+function syncMapTimelineControls() {
+  const extent = state.mapTimeline.extent || getMapTimelineExtentFromSituation(state.shotBundle);
+  const hasExtent = Number.isFinite(extent.start) && Number.isFinite(extent.end) && extent.end > extent.start;
+  const normalizedTime = clamp(Number.isFinite(state.mapTimeline.time) ? state.mapTimeline.time : extent.start, extent.start, extent.end);
+
+  if (el.mapModeFull) {
+    el.mapModeFull.setAttribute("aria-pressed", String(state.mapTimeline.mode === "full"));
+  }
+  if (el.mapModeTime) {
+    el.mapModeTime.setAttribute("aria-pressed", String(state.mapTimeline.mode === "time"));
+  }
+  if (el.mapTimeSlider) {
+    el.mapTimeSlider.min = extent.start.toFixed(2);
+    el.mapTimeSlider.max = extent.end.toFixed(2);
+    el.mapTimeSlider.step = hasExtent ? Math.max(0.05, (extent.end - extent.start) / 420).toFixed(3) : "0.1";
+    el.mapTimeSlider.value = normalizedTime.toFixed(2);
+    el.mapTimeSlider.disabled = !state.shotBundle || state.mapTimeline.mode !== "time" || !hasExtent;
+  }
+  if (el.mapTimePlay) {
+    el.mapTimePlay.setAttribute("aria-pressed", String(state.mapTimeline.playing));
+    el.mapTimePlay.textContent = state.mapTimeline.playing ? "Pause timeline" : "Play timeline";
+    el.mapTimePlay.hidden = state.mapTimeline.mode !== "time";
+    el.mapTimePlay.disabled = !state.shotBundle || !hasExtent || state.mapTimeline.mode !== "time";
+  }
+  if (el.mapTimeValue) {
+    el.mapTimeValue.textContent = state.mapTimeline.mode === "full"
+      ? "Full map"
+      : `Map time ${formatSeconds(normalizedTime)}`;
+  }
+  if (el.mapTimeNote) {
+    el.mapTimeNote.textContent = state.mapTimeline.mode === "full"
+      ? "Full map mode keeps the complete spatial context visible. Switch to time-filtered map to explore the situation timeline independently from DAS/hydro controls."
+      : "Time-filtered map uses the situation/track timeline only. It remains independent from DAS/hydro interval controls.";
+  }
+}
+
+function resetMapTimelineForShot() {
+  stopMapTimelinePlayback();
+  const extent = getMapTimelineExtentFromSituation(state.shotBundle);
+  state.mapTimeline.extent = extent;
+  state.mapTimeline.mode = "full";
+  state.mapTimeline.time = extent.start;
+  syncMapTimelineControls();
+}
+
+function stopMapTimelinePlayback() {
+  state.mapTimeline.playing = false;
+  state.mapTimelineLastTickMs = 0;
+  if (state.mapTimelinePlayFrame) {
+    cancelAnimationFrame(state.mapTimelinePlayFrame);
+    state.mapTimelinePlayFrame = 0;
+  }
+}
+
+function startMapTimelinePlayback() {
+  const extent = state.mapTimeline.extent || getMapTimelineExtentFromSituation(state.shotBundle);
+  if (!Number.isFinite(extent.start) || !Number.isFinite(extent.end) || extent.end <= extent.start) {
+    return;
+  }
+
+  state.mapTimeline.mode = "time";
+  if (state.mapTimeline.time >= extent.end - 1e-6) {
+    state.mapTimeline.time = extent.start;
+  }
+  state.mapTimeline.playing = true;
+  state.mapTimelineLastTickMs = 0;
+
+  const tick = (timestampMs) => {
+    if (!state.mapTimeline.playing) {
+      state.mapTimelinePlayFrame = 0;
+      return;
+    }
+
+    if (!state.mapTimelineLastTickMs) {
+      state.mapTimelineLastTickMs = timestampMs;
+    }
+    const dtSec = Math.max(0, (timestampMs - state.mapTimelineLastTickMs) / 1000);
+    state.mapTimelineLastTickMs = timestampMs;
+
+    const currExtent = state.mapTimeline.extent || getMapTimelineExtentFromSituation(state.shotBundle);
+    const nextTime = state.mapTimeline.time + dtSec * MAP_TIMELINE_PLAY_SPEED_S;
+
+    if (nextTime >= currExtent.end) {
+      state.mapTimeline.time = currExtent.end;
+      stopMapTimelinePlayback();
+      syncMapTimelineControls();
+      scheduleMapRender();
+      return;
+    }
+
+    state.mapTimeline.time = nextTime;
+    syncMapTimelineControls();
+    scheduleMapRender();
+    state.mapTimelinePlayFrame = requestAnimationFrame(tick);
+  };
+
+  syncMapTimelineControls();
+  scheduleMapRender();
+  state.mapTimelinePlayFrame = requestAnimationFrame(tick);
+}
+
+function toggleMapTimelinePlayback() {
+  if (state.mapTimeline.playing) {
+    stopMapTimelinePlayback();
+    syncMapTimelineControls();
+    return;
+  }
+  startMapTimelinePlayback();
+}
+
+function setMapTimelineMode(mode) {
+  if (mode !== "full" && mode !== "time") {
+    return;
+  }
+  if (mode === "full") {
+    stopMapTimelinePlayback();
+  }
+  state.mapTimeline.mode = mode;
+  syncMapTimelineControls();
+  scheduleMapRender();
+}
+
+function setMapTimelineTime(timeValue) {
+  const extent = state.mapTimeline.extent || getMapTimelineExtentFromSituation(state.shotBundle);
+  state.mapTimeline.time = clamp(timeValue, extent.start, extent.end);
+  syncMapTimelineControls();
+  scheduleMapRender();
 }
 
 function clampIntervalToTimeRange(start, end, timeExtent) {
@@ -693,104 +885,71 @@ function renderHydroPanel() {
   el.hydroCaption.textContent = `Hydrophone support score synchronized with interval ${interval.start.toFixed(2)}-${interval.end.toFixed(2)} s; candidate-event guidance overlay enabled.`;
 }
 
-function shotDuration() {
-  const extent = getTimeExtentFromShotBundle(state.shotBundle);
-  return Math.max(0, extent.end - extent.start);
-}
-
-function currentSnapshot() {
-  const das = state.shotBundle?.dasActivity;
-  const t = das?.axes?.t_s;
-  const distances = das?.axes?.distances_m;
-  const matrix = das?.activity_01;
-  if (!Array.isArray(t) || !Array.isArray(distances) || !Array.isArray(matrix) || t.length === 0) {
-    return { peakDistance: null };
-  }
-
-  let bestIdx = 0;
-  let bestDiff = Math.abs(t[0] - state.cursorTime);
-  for (let i = 1; i < t.length; i += 1) {
-    const diff = Math.abs(t[i] - state.cursorTime);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      bestIdx = i;
-    }
-  }
-
-  const row = matrix[bestIdx];
-  if (!Array.isArray(row) || row.length === 0) {
-    return { peakDistance: null };
-  }
-
-  let peakIdx = 0;
-  let peakVal = Number(row[0]) || 0;
-  for (let i = 1; i < row.length; i += 1) {
-    const v = Number(row[i]) || 0;
-    if (v > peakVal) {
-      peakVal = v;
-      peakIdx = i;
-    }
-  }
-
-  return { peakDistance: Number.isFinite(distances[peakIdx]) ? distances[peakIdx] : null };
-}
-
 function buildSituationPoints(recorders, sourcePoint, xScale, yScale) {
   const parts = [];
   recorders.forEach((rec) => {
     const cx = xScale(rec.x);
     const cy = yScale(rec.y);
-    parts.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="8" fill="rgba(114,246,255,0.16)"></circle>`);
-    parts.push(`<circle class="map-interactive-point map-point-recorder" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="3.9" fill="#72f6ff" data-tooltip-title="Recorder Station" data-tooltip-body="Type: Recorder station<br>Name: ${rec.name}<br>Coordinates (E, N): ${rec.x.toFixed(1)} m, ${rec.y.toFixed(1)} m"></circle>`);
+    parts.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="10.5" fill="rgba(114,246,255,0.2)"></circle>`);
+    parts.push(`<circle class="map-interactive-point map-point-recorder" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="5.7" fill="#72f6ff" stroke="rgba(226,236,255,0.86)" stroke-width="1.3" data-tooltip-title="Recorder Station" data-tooltip-body="Type: Recorder station<br>Name: ${rec.name}<br>Coordinates (E, N): ${rec.x.toFixed(1)} m, ${rec.y.toFixed(1)} m"></circle>`);
   });
 
   if (sourcePoint) {
     const cx = xScale(sourcePoint.x);
     const cy = yScale(sourcePoint.y);
-    parts.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="12" fill="rgba(255,79,216,0.18)"></circle>`);
-    parts.push(`<circle class="map-interactive-point map-point-source" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="4.7" fill="#ff4fd8" data-tooltip-title="Source Reference" data-tooltip-body="Type: Reference source<br>Coordinates (E, N): ${sourcePoint.x.toFixed(1)} m, ${sourcePoint.y.toFixed(1)} m${Number.isFinite(sourcePoint.depth) ? `<br>Depth: ${sourcePoint.depth.toFixed(1)} m` : ""}"></circle>`);
+    parts.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="14" fill="rgba(255,79,216,0.23)"></circle>`);
+    parts.push(`<circle class="map-interactive-point map-point-source" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="6.5" fill="#ff4fd8" stroke="rgba(255,236,251,0.9)" stroke-width="1.35" data-tooltip-title="Source Reference" data-tooltip-body="Type: Reference source<br>Coordinates (E, N): ${sourcePoint.x.toFixed(1)} m, ${sourcePoint.y.toFixed(1)} m${Number.isFinite(sourcePoint.depth) ? `<br>Depth: ${sourcePoint.depth.toFixed(1)} m` : ""}"></circle>`);
   }
 
   return parts.join("");
 }
 
-function buildMapTimeOverlays(fiber, tracks, xScale, yScale) {
+function buildMapTimeOverlays(tracks, xScale, yScale, mapTime) {
   const parts = [];
-  const snap = currentSnapshot();
-
-  const fiberSegs = Object.values(fiber || {}).filter((pts) => Array.isArray(pts) && pts.length > 1);
-  if (fiberSegs.length && snap.peakDistance != null) {
-    const mainFiber = fiberSegs.reduce((best, cur) => (cur.length > best.length ? cur : best), fiberSegs[0]);
-    const distances = state.shotBundle?.dasActivity?.axes?.distances_m || [];
-    const minD = distances.length ? distances[0] : 0;
-    const maxD = distances.length ? distances[distances.length - 1] : 1;
-    const frac = clamp((snap.peakDistance - minD) / Math.max(1e-6, maxD - minD), 0, 1);
-    const idx = Math.round(frac * (mainFiber.length - 1));
-    const pt = mainFiber[idx];
-    if (pt && Number.isFinite(pt.x) && Number.isFinite(pt.y)) {
-      const x = xScale(pt.x);
-      const y = yScale(pt.y);
-      parts.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="20" fill="rgba(255,230,109,0.12)"></circle>`);
-      parts.push(`<circle class="map-interactive-point map-point-daspeak" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="9.8" fill="rgba(255,230,109,0.96)" stroke="rgba(255,244,178,0.58)" stroke-width="1.1" data-tooltip-title="DAS Peak Projection" data-tooltip-body="Type: Dynamic DAS marker<br>Meaning: Peak DAS activity projected on fiber<br>Time: ${state.cursorTime.toFixed(2)} s"></circle>`);
-    }
-  }
-
-  const duration = shotDuration();
-  const extent = getTimeExtentFromShotBundle(state.shotBundle);
-  const shotFrac = duration > 0 ? clamp((state.cursorTime - extent.start) / duration, 0, 1) : 0;
-  const palette = ["#72f6ff", "#ff4fd8", "#9cff57", "#ffe66d"];
   let k = 0;
   for (const [trackName, item] of Object.entries(tracks || {})) {
     const seqs = Array.isArray(item) ? [item] : Object.values(item || {}).filter(Array.isArray);
     for (const seq of seqs.slice(0, 1)) {
       if (!seq || seq.length < 2) continue;
-      const idx = Math.round(shotFrac * (seq.length - 1));
-      const pt = seq[idx];
-      if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) continue;
-      const color = palette[k % palette.length];
+      const finiteSeq = seq.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y));
+      const visible = finiteSeq.filter((pt) => Number.isFinite(pt?.t) && pt.t <= mapTime);
+      const color = TRACK_PALETTE[k % TRACK_PALETTE.length];
       k += 1;
-      parts.push(`<circle cx="${xScale(pt.x).toFixed(2)}" cy="${yScale(pt.y).toFixed(2)}" r="11" fill="${color}" opacity="0.18"></circle>`);
-      parts.push(`<circle class="map-interactive-point map-point-boatcue" cx="${xScale(pt.x).toFixed(2)}" cy="${yScale(pt.y).toFixed(2)}" r="4.9" fill="${color}" stroke="rgba(226,236,255,0.42)" stroke-width="0.9" data-tooltip-title="Boat Position Cue" data-tooltip-body="Type: Dynamic trajectory marker<br>Track: ${trackName}<br>Coordinates (E, N): ${pt.x.toFixed(1)} m, ${pt.y.toFixed(1)} m<br>Time: ${state.cursorTime.toFixed(2)} s"></circle>`);
+      const currentPoint = visible.length ? visible[visible.length - 1] : finiteSeq[0];
+      if (!currentPoint || !Number.isFinite(currentPoint.x) || !Number.isFinite(currentPoint.y)) {
+        continue;
+      }
+      const x = xScale(currentPoint.x);
+      const y = yScale(currentPoint.y);
+      parts.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="14" fill="${color}" opacity="0.24"></circle>`);
+      parts.push(`<circle class="map-interactive-point map-point-boatcue" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="6.4" fill="${color}" stroke="rgba(226,236,255,0.86)" stroke-width="1.35" data-tooltip-title="Boat Position Cue" data-tooltip-body="Type: Independent track marker<br>Track: ${trackName}<br>Coordinates (E, N): ${currentPoint.x.toFixed(1)} m, ${currentPoint.y.toFixed(1)} m${Number.isFinite(currentPoint.t) ? `<br>Map time: ${currentPoint.t.toFixed(2)} s` : ""}"></circle>`);
+    }
+  }
+
+  return parts.join("");
+}
+
+function buildTrackPointMarkers(tracks, xScale, yScale) {
+  const parts = [];
+  let trackIndex = 0;
+
+  for (const [trackName, item] of Object.entries(tracks || {})) {
+    const seqs = Array.isArray(item) ? [item] : Object.values(item || {}).filter(Array.isArray);
+    for (const seq of seqs.slice(0, 1)) {
+      const finiteSeq = seq.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y));
+      if (finiteSeq.length < 2) {
+        continue;
+      }
+
+      const color = TRACK_PALETTE[trackIndex % TRACK_PALETTE.length];
+      trackIndex += 1;
+      const endPoint = finiteSeq[finiteSeq.length - 1];
+      if (!endPoint || !Number.isFinite(endPoint.x) || !Number.isFinite(endPoint.y)) {
+        continue;
+      }
+
+      parts.push(`<circle cx="${xScale(endPoint.x).toFixed(2)}" cy="${yScale(endPoint.y).toFixed(2)}" r="14" fill="${color}" opacity="0.24"></circle>`);
+      parts.push(`<circle class="map-interactive-point map-point-boatcue" cx="${xScale(endPoint.x).toFixed(2)}" cy="${yScale(endPoint.y).toFixed(2)}" r="6.4" fill="${color}" stroke="rgba(226,236,255,0.86)" stroke-width="1.35" data-tooltip-title="Final Boat Position" data-tooltip-body="Type: End position<br>Track: ${trackName}<br>Coordinates (E, N): ${endPoint.x.toFixed(1)} m, ${endPoint.y.toFixed(1)} m${Number.isFinite(endPoint.t) ? `<br>Track time: ${endPoint.t.toFixed(2)} s` : ""}"></circle>`);
     }
   }
 
@@ -799,7 +958,7 @@ function buildMapTimeOverlays(fiber, tracks, xScale, yScale) {
 
 function buildLegend(tracks, palette, legendX, legendY, includeFiber = true) {
   const names = Object.keys(tracks || {});
-  const items = includeFiber ? [{ name: "Fiber", color: "#f1681f" }] : [];
+  const items = includeFiber ? [{ name: "Fiber", color: "#ff4fd8" }] : [];
   names.slice(0, 5).forEach((name, idx) => items.push({ name, color: palette[idx % palette.length] }));
   const legendW = 170;
   const legendH = Math.max(52, 24 + items.length * 18);
@@ -822,6 +981,8 @@ function renderMapPanel() {
   const source = getSourceGroundTruth();
   const recorderSummary = state.shotBundle?.recordersSummary;
   const situation = state.shotBundle?.situation;
+  const mapTimelineExtent = getMapTimelineExtentFromSituation(state.shotBundle);
+  state.mapTimeline.extent = mapTimelineExtent;
   const recorders = [];
 
   const width = Math.max(640, Math.floor(el.mapSvg.clientWidth || 1200));
@@ -866,6 +1027,8 @@ function renderMapPanel() {
   const trackItems = Object.entries(boatTracks || {})
     .filter(([, pts]) => Array.isArray(pts) && pts.length > 1)
     .map(([name, pts]) => ({ name, points: pts }));
+  const mapTimelineMode = state.mapTimeline.mode === "time" ? "time" : "full";
+  const mapTimelineTime = clamp(Number.isFinite(state.mapTimeline.time) ? state.mapTimeline.time : mapTimelineExtent.start, mapTimelineExtent.start, mapTimelineExtent.end);
 
   const sourcePoint = (source.available && Number.isFinite(source.x) && Number.isFinite(source.y))
     ? { x: source.x, y: source.y, depth: source.depth }
@@ -1064,8 +1227,6 @@ function renderMapPanel() {
     return parts.join("");
   };
 
-  const trackPalette = ["#72f6ff", "#ff4fd8", "#9cff57", "#ffe66d", "#c9a0ff", "#ff7a59"];
-
   const parts = [
     `<rect x="0" y="0" width="${width}" height="${height}" fill="rgba(5,11,23,0.97)"></rect>`,
     `<rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" fill="rgba(8,15,31,0.45)" stroke="rgba(197,223,255,0.18)"></rect>`
@@ -1084,44 +1245,73 @@ function renderMapPanel() {
     for (let i = 1; i < fiberPts.length; i += 1) {
       const prev = fiberPts[i - 1];
       const curr = fiberPts[i];
-      parts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(241,104,31,0.28)" stroke-width="2.1" stroke-linecap="round"></line>`);
+      parts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,79,216,0.34)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></line>`);
     }
   }
 
   if (showTracks) {
     trackItems.forEach((track, idx) => {
-      const color = trackPalette[idx % trackPalette.length];
-      const pts = decimatePoints(
-        track.points.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)),
-        zoom <= 1.6 ? 260 : 700
-      );
+      const color = TRACK_PALETTE[idx % TRACK_PALETTE.length];
+      const rawPoints = mapTimelineMode === "time"
+        ? track.points.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y) && Number.isFinite(pt?.t) && pt.t <= mapTimelineTime)
+        : track.points.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y));
+      const pts = decimatePoints(rawPoints, zoom <= 1.6 ? 260 : 700);
       for (let i = 1; i < pts.length; i += 1) {
         const prev = pts[i - 1];
         const curr = pts[i];
-        const body = `Type: Vessel trajectory<br>Track: ${track.name}<br>Coordinates (E, N): ${curr.x.toFixed(1)} m, ${curr.y.toFixed(1)} m`;
+        const body = `Type: Vessel trajectory<br>Track: ${track.name}<br>Coordinates (E, N): ${curr.x.toFixed(1)} m, ${curr.y.toFixed(1)} m${Number.isFinite(curr.t) ? `<br>Track time: ${curr.t.toFixed(2)} s` : ""}`;
         parts.push(`<line class="map-interactive-line map-track-segment" x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="${color}" stroke-width="1.8" opacity="0.92" data-tooltip-title="Boat Trajectory" data-tooltip-body="${body}"></line>`);
       }
     });
   }
 
+  if (showFiber && Array.isArray(fiberAll) && fiberAll.length > 1) {
+    const fiberPtsTop = decimatePoints(
+      fiberAll.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)),
+      zoom <= 1.6 ? 420 : 980
+    );
+    for (let i = 1; i < fiberPtsTop.length; i += 1) {
+      const prev = fiberPtsTop[i - 1];
+      const curr = fiberPtsTop[i];
+      parts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,79,216,0.22)" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"></line>`);
+      parts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,122,228,0.97)" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"></line>`);
+    }
+  }
+
+  if (showTracks && mapTimelineMode === "full") {
+    parts.push(buildTrackPointMarkers(boatTracks || {}, xScale, yScale));
+  }
+
   const points = showPoints ? buildSituationPoints(recorders, sourcePoint, xScale, yScale) : "";
-  const overlays = buildMapTimeOverlays(showFiber ? { all: fiberAll } : {}, showTracks ? (boatTracks || {}) : {}, xScale, yScale);
+  const overlays = mapTimelineMode === "time" ? buildMapTimeOverlays(showTracks ? (boatTracks || {}) : {}, xScale, yScale, mapTimelineTime) : "";
   const legendX = pad.l + plotW + 12;
   const legendY = pad.t + 12;
-  const legend = buildLegend(showTracks ? (boatTracks || {}) : {}, trackPalette, legendX, legendY, showFiber);
+  const legend = buildLegend(showTracks ? (boatTracks || {}) : {}, TRACK_PALETTE, legendX, legendY, showFiber);
 
   parts.push(points);
   parts.push(overlays);
   parts.push(legend);
 
   state.geometry.map = {
+    pad,
     plotW,
-    plotH
+    plotH,
+    baseRangeX,
+    baseRangeY,
+    baseCenterX: (minX + maxX) * 0.5,
+    baseCenterY: (minY + maxY) * 0.5,
+    viewMinX,
+    viewMaxX,
+    viewMinY,
+    viewMaxY
   };
 
   el.mapSvg.innerHTML = parts.join("");
-  el.mapCaption.textContent = "Hover tracks and points for details. The map reacts softly to the current playback time.";
+  el.mapCaption.textContent = mapTimelineMode === "full"
+    ? "Full map mode shows the entire spatial context, including all bathymetry and track history. Switch to time-filtered mode for an independent situation timeline."
+    : `Time-filtered map at ${mapTimelineTime.toFixed(2)} s uses the situation/track timeline only.`;
   attachMapHoverHandlers();
+  syncMapTimelineControls();
 }
 
 function attachMapHoverHandlers() {
@@ -1169,7 +1359,9 @@ function bindMapControlHandlers() {
       return;
     }
 
-    if (btn.getAttribute("data-action") === "reset-view") {
+    const action = btn.getAttribute("data-action");
+
+    if (action === "reset-view") {
       resetMapViewport();
       state.draggingTarget = null;
       el.mapControls.querySelectorAll("[data-layer]").forEach((layerBtn) => {
@@ -1189,26 +1381,97 @@ function bindMapControlHandlers() {
   });
 }
 
+function bindMapTimelineHandlers() {
+  if (el.mapModeFull) {
+    el.mapModeFull.addEventListener("click", () => setMapTimelineMode("full"));
+  }
+  if (el.mapModeTime) {
+    el.mapModeTime.addEventListener("click", () => setMapTimelineMode("time"));
+  }
+  if (el.mapTimePlay) {
+    el.mapTimePlay.addEventListener("click", () => {
+      if (state.mapTimeline.mode !== "time") {
+        state.mapTimeline.mode = "time";
+      }
+      toggleMapTimelinePlayback();
+    });
+  }
+  if (el.mapTimeSlider) {
+    el.mapTimeSlider.addEventListener("input", (event) => {
+      const next = parseNumeric(event.target.value);
+      if (next == null) {
+        return;
+      }
+      stopMapTimelinePlayback();
+      if (state.mapTimeline.mode !== "time") {
+        state.mapTimeline.mode = "time";
+      }
+      setMapTimelineTime(next);
+    }, { passive: true });
+  }
+}
+
 function onMapWheel(event) {
   if (!state.shotBundle) {
-    return;
-  }
-  // Keep page scroll smooth. Zoom only on explicit gesture.
-  if (!event.ctrlKey && !event.metaKey) {
     return;
   }
   event.preventDefault();
 
   const modeScale = event.deltaMode === 1 ? 16 : (event.deltaMode === 2 ? 120 : 1);
   const normalizedDelta = event.deltaY * modeScale;
-  const factor = Math.exp(-normalizedDelta * 0.00135);
+  const factor = clamp(Math.exp(-normalizedDelta * 0.00165), 0.88, 1.14);
   const currentTarget = Number.isFinite(state.mapViewport.targetZoom) ? state.mapViewport.targetZoom : state.mapViewport.zoom;
   state.mapViewport.targetZoom = clamp(currentTarget * factor, 1, 8);
   animateMapZoom();
 }
 
+function zoomMapAtClientPoint(clientX, clientY, multiplier) {
+  if (!state.shotBundle || !el.mapSvg) {
+    return;
+  }
+
+  const geo = state.geometry.map;
+  if (!geo) {
+    const fallbackTarget = Number.isFinite(state.mapViewport.targetZoom) ? state.mapViewport.targetZoom : state.mapViewport.zoom;
+    state.mapViewport.targetZoom = clamp(fallbackTarget * multiplier, 1, 8);
+    animateMapZoom();
+    return;
+  }
+
+  const rect = el.mapSvg.getBoundingClientRect();
+  const sx = clamp((clientX - rect.left - geo.pad.l) / Math.max(1, geo.plotW), 0, 1);
+  const sy = clamp((clientY - rect.top - geo.pad.t) / Math.max(1, geo.plotH), 0, 1);
+  const currentRangeX = Math.max(0.0001, geo.viewMaxX - geo.viewMinX);
+  const currentRangeY = Math.max(0.0001, geo.viewMaxY - geo.viewMinY);
+  const anchorX = geo.viewMinX + sx * currentRangeX;
+  const anchorY = geo.viewMaxY - sy * currentRangeY;
+
+  const currentTarget = Number.isFinite(state.mapViewport.targetZoom) ? state.mapViewport.targetZoom : state.mapViewport.zoom;
+  const nextTargetZoom = clamp(currentTarget * multiplier, 1, 8);
+  const nextRangeX = geo.baseRangeX / nextTargetZoom;
+  const nextRangeY = geo.baseRangeY / nextTargetZoom;
+  const nextCenterX = anchorX + (0.5 - sx) * nextRangeX;
+  const nextCenterY = anchorY + (sy - 0.5) * nextRangeY;
+
+  state.mapViewport.offsetX = clamp((nextCenterX - geo.baseCenterX) / Math.max(0.0001, geo.baseRangeX), -0.5, 0.5);
+  state.mapViewport.offsetY = clamp((nextCenterY - geo.baseCenterY) / Math.max(0.0001, geo.baseRangeY), -0.5, 0.5);
+  state.mapViewport.targetZoom = nextTargetZoom;
+  animateMapZoom();
+}
+
+function onMapDoubleClick(event) {
+  if (!state.shotBundle) {
+    return;
+  }
+  event.preventDefault();
+  zoomMapAtClientPoint(event.clientX, event.clientY, event.shiftKey ? (1 / 1.55) : 1.55);
+}
+
 function onMapPointerDown(event) {
-  if (!state.shotBundle || event.button !== 0) {
+  if (!state.shotBundle) {
+    return;
+  }
+  if (typeof event.button === "number" && event.button !== 0) {
     return;
   }
   state.draggingTarget = "map";
@@ -1232,6 +1495,38 @@ function onMapPointerMove(event) {
   state.mapViewport.offsetX = clamp(state.mapViewport.offsetX - (dx / Math.max(1, geo.plotW)) / state.mapViewport.zoom, -0.5, 0.5);
   state.mapViewport.offsetY = clamp(state.mapViewport.offsetY + (dy / Math.max(1, geo.plotH)) / state.mapViewport.zoom, -0.5, 0.5);
   scheduleMapRender();
+}
+
+function onMapTouchStart(event) {
+  if (!state.shotBundle) {
+    return;
+  }
+  const touch = event.touches?.[0];
+  if (!touch) {
+    return;
+  }
+  state.draggingTarget = "map";
+  state.hover.map = { x: touch.clientX, y: touch.clientY };
+  if (el.mapSvg) {
+    el.mapSvg.style.cursor = "grabbing";
+  }
+  event.preventDefault();
+}
+
+function onMapTouchMove(event) {
+  if (state.draggingTarget !== "map") {
+    return;
+  }
+  const touch = event.touches?.[0];
+  if (!touch) {
+    return;
+  }
+  onMapPointerMove(touch);
+  event.preventDefault();
+}
+
+function onMapTouchEnd() {
+  onGlobalPointerUp();
 }
 
 function renderEventNavigation() {
@@ -1598,6 +1893,7 @@ async function onShotChanged() {
     if (manifestResult.data && manifestResult.url) {
       state.shotBundle = await loadBundleFromManifest(manifestResult.data, manifestResult.url);
       resetMapViewport();
+      resetMapTimelineForShot();
       state.eventCount = getEventList().length;
       applyIntervalDefaults();
       renderManifestMetadata();
@@ -1617,6 +1913,7 @@ async function onShotChanged() {
     if (fallbackBundle) {
       state.shotBundle = fallbackBundle;
       resetMapViewport();
+      resetMapTimelineForShot();
       state.selectedManifest = null;
       state.manifestSource = null;
       state.eventCount = getEventList().length;
@@ -1717,12 +2014,18 @@ function bindEvents() {
   }, { passive: true });
 
   el.mapSvg.addEventListener("wheel", onMapWheel, { passive: false });
+  el.mapSvg.addEventListener("dblclick", onMapDoubleClick);
   el.mapSvg.addEventListener("mousedown", onMapPointerDown);
   el.mapSvg.addEventListener("mousemove", onMapPointerMove, { passive: true });
+  el.mapSvg.addEventListener("touchstart", onMapTouchStart, { passive: false });
+  el.mapSvg.addEventListener("touchmove", onMapTouchMove, { passive: false });
+  el.mapSvg.addEventListener("touchend", onMapTouchEnd, { passive: true });
+  el.mapSvg.addEventListener("touchcancel", onMapTouchEnd, { passive: true });
 
   window.addEventListener("mouseup", onGlobalPointerUp, { passive: true });
 
   bindMapControlHandlers();
+  bindMapTimelineHandlers();
 
   window.addEventListener("resize", () => {
     if (state.shotBundle) {

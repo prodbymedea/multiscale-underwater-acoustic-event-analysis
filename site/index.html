@@ -121,7 +121,6 @@
         <div class="map-head">
           <div>
             <h2 id="map-heading">Bathymetry + Fiber Track + Boat Tracks</h2>
-            <p class="map-subtitle">This is the large spatial context view. Zoom, pan, and hover the map like an analysis surface, not a tiny side widget.</p>
           </div>
           <span class="map-badge">Spatial Main View</span>
         </div>
@@ -132,10 +131,24 @@
           <button class="map-toggle" data-layer="points" type="button" aria-pressed="true" title="Toggle recorder/source points">Points</button>
           <button class="map-toggle map-toggle-reset" data-action="reset-view" type="button" title="Reset map view">Reset view</button>
         </div>
+        <div class="map-time-controls" id="map-time-controls">
+          <div class="map-time-head">
+            <span class="map-time-label">Map timeline</span>
+            <span id="map-time-value" class="map-time-value">Full map</span>
+          </div>
+          <div class="map-time-buttons">
+            <button id="map-mode-full" class="map-toggle" type="button" aria-pressed="true" title="Show the full spatial context">Full map</button>
+            <button id="map-mode-time" class="map-toggle" type="button" aria-pressed="false" title="Filter the map by the situation timeline">Time-filtered map</button>
+            <button id="map-time-play" class="map-toggle map-toggle-play" type="button" aria-pressed="false" title="Play or pause map timeline">Play timeline</button>
+          </div>
+          <div class="map-time-slider-row">
+            <input id="map-time-slider" type="range" min="0" max="1" step="0.1" value="0" aria-label="Map timeline position" />
+          </div>
+          <p id="map-time-note" class="map-time-note">Full map mode keeps the complete spatial context visible. Switch to time-filtered map to explore the situation timeline independently from DAS/hydro controls.</p>
+        </div>
         <div id="map-view" class="panel-placeholder">
           <svg id="map-svg" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-label="Spatial context"></svg>
           <p id="map-caption" class="panel-caption">Waiting for spatial context...</p>
-          <p class="map-caption-secondary">Large interactive spatial map: bathymetry background, fiber, boat tracks, and experiment points. This is the prominent map view you asked for.</p>
         </div>
       </article>
     </section>
