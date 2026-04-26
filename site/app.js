@@ -631,6 +631,21 @@ function colorForSpecDbRgb(db, vmin, vmax) {
   return [r, g, b];
 }
 
+function quantileFromSorted(sortedValues, q) {
+  if (!Array.isArray(sortedValues) || sortedValues.length === 0) {
+    return null;
+  }
+  const qq = clamp(q, 0, 1);
+  const idx = qq * (sortedValues.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) {
+    return sortedValues[lo];
+  }
+  const frac = idx - lo;
+  return sortedValues[lo] * (1 - frac) + sortedValues[hi] * frac;
+}
+
 async function tryLoadJsonFromCandidates(relativePath, baseCandidates) {
   for (const base of baseCandidates) {
     const url = `${base}/${relativePath}`;
@@ -2312,9 +2327,11 @@ function renderSelectedChannelPanel() {
       if (el.selchChannelSelect.dataset.shotId !== String(state.selectedShotId)) {
         el.selchChannelSelect.innerHTML = "";
         cols.forEach((col) => {
+          const entry = sc.entryByCol?.[String(col)];
           const opt = document.createElement("option");
           opt.value = String(col);
-          opt.textContent = `Preview col ${col}`;
+          const raw = Number(entry?.raw_das_channel_index);
+          opt.textContent = Number.isFinite(raw) ? `Preview col ${col} (raw ${raw})` : `Preview col ${col}`;
           el.selchChannelSelect.appendChild(opt);
         });
         el.selchChannelSelect.dataset.shotId = String(state.selectedShotId || "");
@@ -2345,33 +2362,91 @@ function renderSelectedChannelPanel() {
     const plotW = width - pad.left - pad.right;
     const plotH = height - pad.top - pad.bottom;
     selchPlotW = plotW;
+    const isOrcaShot = state.selectedShotId === "whales_orca";
+    const isHumpbackShot = state.selectedShotId === "whales_humpback";
+    const freqs = Array.isArray(sc.spec?.freqs) ? sc.spec.freqs : null;
+    let fiLo = 0;
+    let fiHi = nf - 1;
+    if (isOrcaShot && freqs && freqs.length === nf) {
+      // Orca-focused display window to improve readability of high-band structure.
+      fiLo = clamp(lowerBoundSorted(freqs, 1500), 0, nf - 1);
+      fiHi = clamp(upperBoundSorted(freqs, 2500) - 1, fiLo, nf - 1);
+    } else if (isHumpbackShot && freqs && freqs.length === nf) {
+      // Humpback-focused display window: emphasize low-mid band where humpback structure is stronger.
+      fiLo = clamp(lowerBoundSorted(freqs, 20), 0, nf - 1);
+      fiHi = clamp(upperBoundSorted(freqs, 1400) - 1, fiLo, nf - 1);
+    }
+    const nFreqDraw = Math.max(1, fiHi - fiLo + 1);
 
-    let vmin = Infinity;
-    let vmax = -Infinity;
     const i0s = lowerBoundSorted(tSpec, interval.start);
     const i1s = upperBoundSorted(tSpec, interval.end) - 1;
+    const contrastSamples = [];
+    const freqBaseline = new Float32Array(nf);
     if (i1s >= i0s) {
-      for (let ti = i0s; ti <= i1s; ti += 1) {
-        for (let fi = 0; fi < nf; fi += Math.max(1, Math.floor(nf / 48))) {
+      const tStep = Math.max(1, Math.floor((i1s - i0s + 1) / 160));
+      const fStep = Math.max(1, Math.floor(nFreqDraw / 80));
+      for (let fi = fiLo; fi <= fiHi; fi += 1) {
+        let sum = 0;
+        let count = 0;
+        for (let ti = i0s; ti <= i1s; ti += tStep) {
           const v = spectrogramValue(sxx, nf, nt, fi, ti, fortran);
-          if (v < vmin) vmin = v;
-          if (v > vmax) vmax = v;
+          sum += v;
+          count += 1;
+          if ((fi - fiLo) % fStep === 0) {
+            contrastSamples.push(v);
+          }
+        }
+        freqBaseline[fi] = count > 0 ? (sum / count) : 0;
+      }
+    }
+    let vmin = -100;
+    let vmax = -20;
+    if (contrastSamples.length >= 4) {
+      contrastSamples.sort((a, b) => a - b);
+      if (isOrcaShot) {
+        // Orca: robust clipping + stronger local contrast around the higher-frequency region.
+        const qLo = quantileFromSorted(contrastSamples, 0.14);
+        const qHi = quantileFromSorted(contrastSamples, 0.995);
+        const qMid = quantileFromSorted(contrastSamples, 0.55);
+        if (Number.isFinite(qLo) && Number.isFinite(qHi) && qHi > qLo) {
+          vmin = qLo;
+          vmax = qHi;
+          const localSpan = Math.max(2, qHi - qLo);
+          vmin = Math.max(vmin, qMid - 0.45 * localSpan);
+        }
+      } else if (isHumpbackShot) {
+        // Humpback: robust clipping with slightly wider body to keep tonal/detail structure visible.
+        const qLo = quantileFromSorted(contrastSamples, 0.08);
+        const qHi = quantileFromSorted(contrastSamples, 0.998);
+        const qMid = quantileFromSorted(contrastSamples, 0.5);
+        if (Number.isFinite(qLo) && Number.isFinite(qHi) && qHi > qLo) {
+          vmin = qLo;
+          vmax = qHi;
+          const localSpan = Math.max(2, qHi - qLo);
+          vmin = Math.max(vmin, qMid - 0.52 * localSpan);
+        }
+      } else {
+        const qLo = quantileFromSorted(contrastSamples, 0.05);
+        const qHi = quantileFromSorted(contrastSamples, 0.995);
+        if (Number.isFinite(qLo) && Number.isFinite(qHi) && qHi > qLo) {
+          vmin = qLo;
+          vmax = qHi;
         }
       }
     }
-    if (!Number.isFinite(vmin) || !Number.isFinite(vmax) || vmin === vmax) {
-      vmin = -100;
-      vmax = -20;
-    }
-    const margin = (vmax - vmin) * 0.04;
+    const margin = (vmax - vmin) * (isOrcaShot ? 0.02 : (isHumpbackShot ? 0.03 : 0.04));
     vmin -= margin;
     vmax += margin;
 
-    drawSelchEventShading(ctx, pad, plotW, plotH, interval, events);
-
-    const img = ctx.createImageData(plotW, plotH);
-    for (let px = 0; px < plotW; px += 1) {
-      const tLin = interval.start + ((px + 0.5) / plotW) * (interval.end - interval.start);
+    const rasW = Math.max(1, Math.floor(plotW));
+    const rasH = Math.max(1, Math.floor(plotH));
+    const off = document.createElement("canvas");
+    off.width = rasW;
+    off.height = rasH;
+    const offCtx = off.getContext("2d");
+    const img = offCtx.createImageData(rasW, rasH);
+    for (let px = 0; px < rasW; px += 1) {
+      const tLin = interval.start + ((px + 0.5) / rasW) * (interval.end - interval.start);
       let lo = 0;
       let hi = tSpec.length - 1;
       while (lo < hi) {
@@ -2387,18 +2462,28 @@ function renderSelectedChannelPanel() {
         ti -= 1;
       }
       ti = clamp(ti, 0, nt - 1);
-      for (let py = 0; py < plotH; py += 1) {
-        const fn = nf - 1 - (py / Math.max(1, plotH - 1)) * (nf - 1);
-        const db = spectrogramValue(sxx, nf, nt, fn, ti, fortran);
+      for (let py = 0; py < rasH; py += 1) {
+        const fn = fiHi - (py / Math.max(1, rasH - 1)) * (nFreqDraw - 1);
+        const fiInt = clamp(Math.floor(fn), 0, nf - 1);
+        let db = spectrogramValue(sxx, nf, nt, fiInt, ti, fortran);
+        if (isOrcaShot) {
+          // Lightweight background suppression: remove per-frequency baseline over current interval.
+          db -= freqBaseline[fiInt];
+        } else if (isHumpbackShot) {
+          // Lighter suppression than Orca to preserve broader low-mid humpback structure.
+          db -= 0.65 * freqBaseline[fiInt];
+        }
         const [r, g, b] = colorForSpecDbRgb(db, vmin, vmax);
-        const o = (py * plotW + px) * 4;
+        const o = (py * rasW + px) * 4;
         img.data[o] = r;
         img.data[o + 1] = g;
         img.data[o + 2] = b;
         img.data[o + 3] = 255;
       }
     }
-    ctx.putImageData(img, pad.left, pad.top);
+    offCtx.putImageData(img, 0, 0);
+    ctx.drawImage(off, pad.left, pad.top, plotW, plotH);
+    drawSelchEventShading(ctx, pad, plotW, plotH, interval, events);
 
     const cursorNorm = (state.cursorTime - interval.start) / Math.max(1e-9, interval.end - interval.start);
     const cursorX = pad.left + clamp(cursorNorm, 0, 1) * plotW;

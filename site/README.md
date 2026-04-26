@@ -27,8 +27,11 @@ The same selected interval (`start` / `end`) now drives all three panels:
 	- falls back to metadata-only mode when spatial coordinates are unavailable.
 - Selected-channel DAS panel:
 	- loads `selected_channels_index.json` when present (multiple preview columns), otherwise the legacy single triple `selected_channel_*.npz`,
-	- shows spectrogram, band-pass **support** score (with threshold and optional mask), and waveform; **Preview column** dropdown appears for multi-channel shots (Orca default 189, 12, 50),
+	- shows spectrogram, band-pass **support** score (with threshold and optional mask), and waveform; **Preview column** dropdown appears for multi-channel shots (current Orca set includes an additional test option mapped nearest to requested raw ch 861),
 	- for single-channel shots, it loads the default selected channel without showing a selector.
+	- shot-specific display-only spectrogram enhancements improve readability while preserving interaction behavior:
+		- Orca: 1500–2500 Hz focus + robust clipping + stronger per-frequency background suppression
+		- Humpback: 20–1400 Hz focus + robust clipping + lighter per-frequency background suppression
 
 ## Synchronization behavior
 

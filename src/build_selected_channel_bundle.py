@@ -45,8 +45,14 @@ SHOT_SPECS: dict[str, tuple[str, str]] = {
 
 # Stage 2 Orca: small fixed set of recommended preview columns (native preview grid indices).
 ORCA_STAGE2_PREVIEW_COLS: list[int] = [189, 12, 50]
+ORCA_STAGE2_DEFAULT_PREVIEW_COL = 172
+ORCA_STAGE2_EXTRA_PREVIEW_COLS: list[int] = [26, 146]
+# Supervisor test request: add raw DAS ch 861 if feasible. Since viewer exports use preview columns,
+# map this raw target to the nearest available preview raw channel.
+ORCA_STAGE2_TEST_RAW_CHANNELS: list[int] = [861]
 HUMPBACK_STAGE2_MAX_CHANNELS = 3
 HUMPBACK_STAGE2_MIN_COL_GAP = 20
+HUMPBACK_STAGE2_EXTRA_PREVIEW_COLS: list[int] = [20, 154]
 
 
 def _mad_threshold(x: np.ndarray, k: float) -> float:
@@ -101,19 +107,6 @@ def _choose_humpback_default_preview_col(shot_dir: Path) -> int:
     act_p = shot_dir / "das_activity_map.npz"
     if not events_p.is_file() or not act_p.is_file():
         return 118
-
-
-def _rank_humpback_preview_cols(shot_dir: Path) -> list[int]:
-    """
-    Return a ranked small set of Humpback preview columns using event-aware DAS activity.
-    Priority score combines event contrast and in-event absolute activity:
-      score = (mean_in - mean_out) + 0.35 * mean_in
-    Then enforce diversity with a minimum preview-column gap.
-    """
-    events_p = shot_dir / "events.json"
-    act_p = shot_dir / "das_activity_map.npz"
-    if not events_p.is_file() or not act_p.is_file():
-        return [118]
     try:
         with open(events_p, encoding="utf-8") as f:
             events_doc = json.load(f)
@@ -180,6 +173,78 @@ def _rank_humpback_preview_cols(shot_dir: Path) -> list[int]:
         return 118
     except Exception:
         return 118
+
+
+def _rank_humpback_preview_cols(shot_dir: Path) -> list[int]:
+    """
+    Return a ranked small set of Humpback preview columns using event-aware DAS activity.
+    Priority score combines event contrast and in-event absolute activity:
+      score = (mean_in - mean_out) + 0.35 * mean_in
+    Then enforce diversity with a minimum preview-column gap.
+    """
+    events_p = shot_dir / "events.json"
+    act_p = shot_dir / "das_activity_map.npz"
+    if not events_p.is_file() or not act_p.is_file():
+        return [118]
+    try:
+        with open(events_p, encoding="utf-8") as f:
+            events_doc = json.load(f)
+        events = events_doc.get("events", [])
+        z = np.load(act_p)
+        a = np.asarray(z["activity_map"], dtype=np.float64)  # [time, channel]
+        t = np.asarray(z["t_windows_s"], dtype=np.float64)
+        if a.ndim != 2 or t.ndim != 1 or a.shape[0] != t.shape[0]:
+            return [118]
+        mask = np.zeros_like(t, dtype=bool)
+        for ev in events:
+            t0 = float(ev.get("start_time_s"))
+            t1 = float(ev.get("end_time_s"))
+            if np.isfinite(t0) and np.isfinite(t1) and t1 >= t0:
+                mask |= (t >= t0) & (t <= t1)
+        if not np.any(mask) or np.all(mask):
+            return [118]
+
+        mean_in = a[mask].mean(axis=0)
+        mean_out = a[~mask].mean(axis=0)
+        contrast = mean_in - mean_out
+        combined = contrast + 0.35 * mean_in
+        order = np.argsort(combined)[::-1]
+
+        selected: list[int] = []
+        for i in order:
+            col = int(i)
+            if all(abs(col - s) >= HUMPBACK_STAGE2_MIN_COL_GAP for s in selected):
+                selected.append(col)
+            if len(selected) >= HUMPBACK_STAGE2_MAX_CHANNELS:
+                break
+
+        if not selected:
+            return [118]
+        # Keep previous default (118) if still competitive and selected.
+        if 118 in selected:
+            selected = [118] + [c for c in selected if c != 118]
+        return selected
+    except Exception:
+        return [118]
+
+
+def _resolve_preview_cols_for_raw_targets(channel_indices: np.ndarray, raw_targets: list[int]) -> list[int]:
+    out: list[int] = []
+    if channel_indices.ndim != 1 or channel_indices.size == 0:
+        return out
+    for raw in raw_targets:
+        idx_exact = np.where(channel_indices == int(raw))[0]
+        if idx_exact.size > 0:
+            out.append(int(idx_exact[0]))
+            continue
+        nearest = int(np.argmin(np.abs(channel_indices - int(raw))))
+        out.append(nearest)
+    # unique preserve order
+    dedup: list[int] = []
+    for c in out:
+        if c not in dedup:
+            dedup.append(c)
+    return dedup
 
 
 def _shot_rel(shot_dir: Path, path: Path) -> str:
@@ -478,6 +543,8 @@ def main() -> None:
     shot_dir.mkdir(parents=True, exist_ok=True)
 
     def_col, def_lo, def_hi = _load_defaults_from_summaries(shot_dir)
+    orca_extra_target_cols: list[int] = []
+    orca_requested_raw_by_col: dict[int, int] = {}
     if shot_id == "whales_humpback":
         pre_meta_band_lo, pre_meta_band_hi = 15.0, 1200.0
         pre_meta_p_probe = shot_dir / "das_preprocessing_metadata.json"
@@ -502,6 +569,9 @@ def main() -> None:
             preview_cols = [int(x.strip()) for x in args.preview_cols.split(",") if x.strip()]
         else:
             preview_cols = _rank_humpback_preview_cols(shot_dir)
+            for c in HUMPBACK_STAGE2_EXTRA_PREVIEW_COLS:
+                if c not in preview_cols:
+                    preview_cols.append(c)
         # Stage-1 continuity: keep 118 as default when present.
         default_preview_col = 118 if 118 in preview_cols else int(preview_cols[0])
     else:
@@ -515,7 +585,17 @@ def main() -> None:
             preview_cols = [int(x.strip()) for x in args.preview_cols.split(",") if x.strip()]
         else:
             preview_cols = list(ORCA_STAGE2_PREVIEW_COLS)
-        default_preview_col = 189 if 189 in preview_cols else int(preview_cols[0])
+            for c in ORCA_STAGE2_EXTRA_PREVIEW_COLS:
+                if c not in preview_cols:
+                    preview_cols.append(c)
+            # Add supervisor test raw channels by nearest preview mapping.
+            orca_extra_target_cols = list(ORCA_STAGE2_TEST_RAW_CHANNELS)
+        if ORCA_STAGE2_DEFAULT_PREVIEW_COL in preview_cols:
+            default_preview_col = ORCA_STAGE2_DEFAULT_PREVIEW_COL
+        elif def_col in preview_cols:
+            default_preview_col = def_col
+        else:
+            default_preview_col = int(preview_cols[0])
 
     pre_meta_p = shot_dir / "das_preprocessing_metadata.json"
     pre_npz_p = shot_dir / "das_preprocessed_preview.npz"
@@ -536,6 +616,20 @@ def main() -> None:
     z = np.load(pre_npz_p)
     channel_indices = np.asarray(z["channel_indices"], dtype=np.int64)
     distances_m = np.asarray(z["distances_m"], dtype=np.float64)
+    if shot_id == "whales_orca" and orca_extra_target_cols:
+        mapped = _resolve_preview_cols_for_raw_targets(channel_indices, orca_extra_target_cols)
+        for raw_target, c in zip(orca_extra_target_cols, mapped):
+            orca_requested_raw_by_col[int(c)] = int(raw_target)
+            if c not in preview_cols:
+                preview_cols.append(c)
+    # Re-evaluate default after any auto-mapped additions (e.g. Orca raw-861 nearest preview).
+    if shot_id == "whales_orca":
+        if ORCA_STAGE2_DEFAULT_PREVIEW_COL in preview_cols:
+            default_preview_col = ORCA_STAGE2_DEFAULT_PREVIEW_COL
+        elif def_col in preview_cols:
+            default_preview_col = def_col
+        else:
+            default_preview_col = int(preview_cols[0])
 
     subdir, fname = SHOT_SPECS[shot_id]
     h5_path = resolve_shot_h5(subdir, fname)
@@ -575,7 +669,11 @@ def main() -> None:
                 "preview_col": int(pc),
                 "raw_das_channel_index": int(bundle["selected_raw_channel"]),
                 "distance_m": float(bundle["selected_distance_m"]),
-                "label": str(bundle["selected_channel_label"]),
+                "label": (
+                    f"{bundle['selected_channel_label']} (nearest preview export to requested raw ch {orca_requested_raw_by_col[int(pc)]})"
+                    if int(pc) in orca_requested_raw_by_col and int(bundle["selected_raw_channel"]) != int(orca_requested_raw_by_col[int(pc)])
+                    else str(bundle["selected_channel_label"])
+                ),
                 "files": {
                     "signal": sig_name,
                     "spectrogram": f"{stem}_spectrogram.npz",
