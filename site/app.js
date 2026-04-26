@@ -23,7 +23,8 @@ const state = {
   geometry: {
     das: null,
     hydro: null,
-    map: null
+    map: null,
+    selch: null
   },
   mapTimeline: {
     mode: "full",
@@ -84,7 +85,16 @@ const el = {
   mapTimeNote: document.getElementById("map-time-note"),
   mapView: document.getElementById("map-view"),
   eventNav: document.getElementById("event-nav"),
-  hoverTooltip: document.getElementById("hover-tooltip")
+  hoverTooltip: document.getElementById("hover-tooltip"),
+  selchUnavailable: document.getElementById("selch-unavailable"),
+  selchContent: document.getElementById("selch-content"),
+  selchSubtitle: document.getElementById("selch-subtitle"),
+  selchSpecCanvas: document.getElementById("selch-spec-canvas"),
+  selchBandCanvas: document.getElementById("selch-band-canvas"),
+  selchWaveCanvas: document.getElementById("selch-wave-canvas"),
+  selchCaption: document.getElementById("selch-caption"),
+  selchChannelWrap: document.getElementById("selch-channel-wrap"),
+  selchChannelSelect: document.getElementById("selch-channel-select")
 };
 
 function updateDataStatus(message) {
@@ -230,6 +240,396 @@ async function fetchJson(url) {
   return response.json();
 }
 
+async function fetchArrayBuffer(url) {
+  const response = await fetch(url, { cache: "no-cache" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.arrayBuffer();
+}
+
+function getNumpyDescrInfo(descrRaw) {
+  const descr = String(descrRaw || "").trim();
+  if (!descr) {
+    return null;
+  }
+  const map = {
+    "<f4": { bytes: 4, kind: "f32" },
+    float32: { bytes: 4, kind: "f32" },
+    "<f8": { bytes: 8, kind: "f64" },
+    float64: { bytes: 8, kind: "f64" },
+    "<i4": { bytes: 4, kind: "i32" },
+    int32: { bytes: 4, kind: "i32" },
+    "<i2": { bytes: 2, kind: "i16" },
+    int16: { bytes: 2, kind: "i16" },
+    "<u2": { bytes: 2, kind: "u16" },
+    uint16: { bytes: 2, kind: "u16" },
+    "|u1": { bytes: 1, kind: "u8" },
+    uint8: { bytes: 1, kind: "u8" },
+    "|i1": { bytes: 1, kind: "i8" },
+    int8: { bytes: 1, kind: "i8" },
+    "|b1": { bytes: 1, kind: "u8" },
+    bool: { bytes: 1, kind: "u8" },
+    "?": { bytes: 1, kind: "u8" }
+  };
+  if (map[descr]) {
+    return { ...map[descr], descr, bigEndian: false };
+  }
+  if (descr.startsWith(">f4")) {
+    return { bytes: 4, kind: "f32be", descr, bigEndian: true };
+  }
+  if (descr.startsWith(">f8")) {
+    return { bytes: 8, kind: "f64be", descr, bigEndian: true };
+  }
+  return null;
+}
+
+function shouldSkipNumpyDescr(descr) {
+  const d = String(descr || "");
+  return /^[|<]U\d/.test(d) || /^[|<]S\d/.test(d) || d.includes("object") || d === "|O8";
+}
+
+function parseNpyArrayBuffer(buffer) {
+  const u8 = new Uint8Array(buffer);
+  const magic = String.fromCharCode(u8[0], u8[1], u8[2], u8[3], u8[4], u8[5]);
+  if (magic !== "\x93NUMPY") {
+    throw new Error("Invalid NPY file");
+  }
+  const major = u8[6];
+  let headerLen;
+  let headerOffset;
+  if (major === 1) {
+    headerLen = u8[8] | (u8[9] << 8);
+    headerOffset = 10;
+  } else if (major === 2) {
+    const dv0 = new DataView(buffer);
+    headerLen = dv0.getUint32(8, true);
+    headerOffset = 12;
+  } else {
+    throw new Error(`Unsupported NPY version ${major}.${u8[7]}`);
+  }
+
+  const headerStr = new TextDecoder("latin1").decode(u8.subarray(headerOffset, headerOffset + headerLen));
+  const descrMatch = headerStr.match(/'descr':\s*'((?:\\'|[^'])*)'|"descr":\s*"((?:\\"|[^"])*)"/);
+  const descrRaw = descrMatch ? descrMatch[1] || descrMatch[2] : null;
+  const descr = descrRaw ? descrRaw.replace(/\\'/g, "'") : null;
+  if (!descr) {
+    throw new Error("NPY missing descr");
+  }
+  if (shouldSkipNumpyDescr(descr)) {
+    return { skipped: true, descr };
+  }
+
+  const shapeMatch = headerStr.match(/'shape':\s*\(([^)]*)\)/);
+  const inner = shapeMatch ? shapeMatch[1].trim() : "";
+  let shape = [];
+  if (inner) {
+    shape = inner
+      .split(",")
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)
+      .map((x) => Number.parseInt(x, 10))
+      .filter((n) => Number.isFinite(n));
+  }
+  let nElems = 1;
+  for (const dim of shape) {
+    nElems *= dim;
+  }
+
+  const fortran = /'fortran_order':\s*True/.test(headerStr);
+  let dataOffset = headerOffset + headerLen;
+  while (dataOffset % 16 !== 0) {
+    dataOffset += 1;
+  }
+
+  const info = getNumpyDescrInfo(descr);
+  if (!info) {
+    throw new Error(`Unsupported NPY dtype ${descr}`);
+  }
+  if (dataOffset + nElems * info.bytes > buffer.byteLength) {
+    throw new Error("NPY payload exceeds buffer");
+  }
+
+  const dv = new DataView(buffer);
+
+  function readBigF32(idx) {
+    return dv.getFloat32(dataOffset + idx * 4, false);
+  }
+  function readBigF64(idx) {
+    return dv.getFloat64(dataOffset + idx * 8, false);
+  }
+
+  let data;
+  if (!info.bigEndian && info.kind === "f32") {
+    data = new Float32Array(buffer, dataOffset, nElems);
+  } else if (!info.bigEndian && info.kind === "f64") {
+    data = new Float64Array(buffer, dataOffset, nElems);
+  } else if (!info.bigEndian && info.kind === "i32") {
+    data = new Int32Array(buffer, dataOffset, nElems);
+  } else if (!info.bigEndian && info.kind === "i16") {
+    data = new Int16Array(buffer, dataOffset, nElems);
+  } else if (!info.bigEndian && info.kind === "u16") {
+    data = new Uint16Array(buffer, dataOffset, nElems);
+  } else if (!info.bigEndian && info.kind === "u8") {
+    data = new Uint8Array(buffer, dataOffset, nElems);
+  } else if (!info.bigEndian && info.kind === "i8") {
+    data = new Int8Array(buffer, dataOffset, nElems);
+  } else if (info.kind === "f32be") {
+    data = new Float32Array(nElems);
+    for (let i = 0; i < nElems; i += 1) {
+      data[i] = readBigF32(i);
+    }
+  } else if (info.kind === "f64be") {
+    data = new Float64Array(nElems);
+    for (let i = 0; i < nElems; i += 1) {
+      data[i] = readBigF64(i);
+    }
+  } else {
+    throw new Error(`Unhandled NPY layout ${descr}`);
+  }
+
+  return { data, shape, descr, fortran };
+}
+
+function unzipNpzToArrays(arrayBuffer) {
+  const lib = typeof fflate !== "undefined" ? fflate : globalThis.fflate;
+  if (!lib || typeof lib.unzipSync !== "function") {
+    throw new Error("fflate.unzipSync is not available");
+  }
+  const bytes = new Uint8Array(arrayBuffer);
+  const entries = lib.unzipSync(bytes);
+  const out = {};
+  for (const name of Object.keys(entries || {})) {
+    if (!name.toLowerCase().endsWith(".npy")) {
+      continue;
+    }
+    const key = name.replace(/\.npy$/i, "");
+    const zbuf = entries[name];
+    const ab = zbuf.buffer.slice(zbuf.byteOffset, zbuf.byteOffset + zbuf.byteLength);
+    let parsed;
+    try {
+      parsed = parseNpyArrayBuffer(ab);
+    } catch (_) {
+      continue;
+    }
+    if (parsed.skipped) {
+      continue;
+    }
+    out[key] = parsed;
+  }
+  return out;
+}
+
+async function fetchNpz(url) {
+  const ab = await fetchArrayBuffer(url);
+  return unzipNpzToArrays(ab);
+}
+
+function manifestRelativeFetchUrls(baseDir, relPath) {
+  if (!relPath || typeof relPath !== "string") {
+    return [];
+  }
+  const trimmed = relPath.trim().replace(/^\.\//, "");
+  const urls = [];
+  urls.push(`${baseDir}/${trimmed}`);
+  if (trimmed.startsWith("output/") || trimmed.includes("output/shots/")) {
+    const slashIdx = trimmed.lastIndexOf("/");
+    const baseName = slashIdx >= 0 ? trimmed.slice(slashIdx + 1) : trimmed;
+    const alt = `${baseDir}/${baseName}`;
+    if (alt !== urls[0]) {
+      urls.push(alt);
+    }
+  }
+  return urls;
+}
+
+async function fetchNpzFromManifestPaths(baseDir, relPath) {
+  const urls = manifestRelativeFetchUrls(baseDir, relPath);
+  for (const url of urls) {
+    try {
+      return await fetchNpz(url);
+    } catch (_) {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+async function fetchJsonFromManifestPaths(baseDir, relPath) {
+  const urls = manifestRelativeFetchUrls(baseDir, relPath);
+  for (const url of urls) {
+    try {
+      return await fetchJson(url);
+    } catch (_) {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+function buildDasActivityFromNpz(npz) {
+  if (!npz) {
+    return null;
+  }
+  const am = npz.activity_map;
+  const tw = npz.t_windows_s;
+  const dist = npz.distances_m;
+  if (!am?.data || !tw?.data || !dist?.data) {
+    return null;
+  }
+  const shape = am.shape;
+  if (shape.length !== 2) {
+    return null;
+  }
+  const nt = shape[0];
+  const nd = shape[1];
+  if (tw.data.length !== nt || dist.data.length !== nd) {
+    return null;
+  }
+  const act = am.data;
+  const fortran = !!am.fortran;
+  const matrix = [];
+  for (let i = 0; i < nt; i += 1) {
+    const row = new Array(nd);
+    for (let j = 0; j < nd; j += 1) {
+      row[j] = fortran ? act[j * nt + i] : act[i * nd + j];
+    }
+    matrix.push(row);
+  }
+  return {
+    axes: {
+      t_s: Array.from(tw.data),
+      distances_m: Array.from(dist.data)
+    },
+    activity_01: matrix
+  };
+}
+
+function buildHydroActivityFromNpz(npz, scoreMetadata) {
+  if (!npz) {
+    return null;
+  }
+  const t = npz.t_s?.data;
+  const raw = npz.raw_score?.data;
+  if (!t || !raw || t.length !== raw.length) {
+    return null;
+  }
+  const thresholdDb = Number(scoreMetadata?.detector?.threshold_db);
+  const hydro = {
+    t_s: Array.from(t),
+    score_db: Array.from(raw),
+    normalization: {}
+  };
+  if (Number.isFinite(thresholdDb)) {
+    hydro.normalization.threshold_db = thresholdDb;
+  }
+  return hydro;
+}
+
+async function attachMainPanelsFromNpzFallback(manifest, manifestUrl, bundle) {
+  const baseDir = getBaseDir(manifestUrl);
+  const files = manifest?.files || {};
+
+  if (!bundle.dasActivity) {
+    const rel = files.das_activity_map_file || files.das_activity_map;
+    const npz =
+      (rel && (await fetchNpzFromManifestPaths(baseDir, rel))) ||
+      (await fetchNpzFromManifestPaths(baseDir, "das_activity_map.npz"));
+    const built = buildDasActivityFromNpz(npz);
+    if (built) {
+      bundle.dasActivity = built;
+    }
+  }
+
+  if (!bundle.hydroActivity) {
+    const rel = files.hydrophone_score_file || files.hydrophone_event_score;
+    const npz =
+      (rel && (await fetchNpzFromManifestPaths(baseDir, rel))) ||
+      (await fetchNpzFromManifestPaths(baseDir, "hydrophone_event_score.npz"));
+    if (npz) {
+      const metaRel = files.hydrophone_score_metadata_file || files.hydrophone_event_score_metadata;
+      let scoreMeta =
+        (metaRel && (await fetchJsonFromManifestPaths(baseDir, metaRel))) ||
+        (await fetchJsonFromManifestPaths(baseDir, "hydrophone_event_score_metadata.json"));
+      const built = buildHydroActivityFromNpz(npz, scoreMeta);
+      if (built) {
+        bundle.hydroActivity = built;
+      }
+    }
+  }
+
+  if (Array.isArray(bundle.missingCompatibilityFiles)) {
+    const hasDas = Boolean(bundle.dasActivity?.axes?.t_s?.length && bundle.dasActivity?.activity_01?.length);
+    const hasHydro = Boolean(bundle.hydroActivity?.t_s?.length && bundle.hydroActivity?.score_db?.length);
+    bundle.missingCompatibilityFiles = bundle.missingCompatibilityFiles.filter((line) => {
+      if (hasDas && line.startsWith("das_activity:")) {
+        return false;
+      }
+      if (hasHydro && line.startsWith("hydrophone_activity:")) {
+        return false;
+      }
+      return true;
+    });
+  }
+}
+
+function lowerBoundSorted(arr, x) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] < x) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+function upperBoundSorted(arr, x) {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] <= x) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return lo;
+}
+
+function spectrogramValue(sxx, nf, nt, fi, ti, fortran) {
+  const fiCl = clamp(Math.floor(fi), 0, nf - 1);
+  const tiCl = clamp(Math.floor(ti), 0, nt - 1);
+  if (!fortran) {
+    return sxx[fiCl * nt + tiCl];
+  }
+  return sxx[tiCl * nf + fiCl];
+}
+
+function colorForSpecDbRgb(db, vmin, vmax) {
+  const span = Math.max(1e-6, vmax - vmin);
+  const v = clamp((db - vmin) / span, 0, 1);
+  const stops = [
+    [6, 12, 24],
+    [0, 96, 255],
+    [0, 214, 255],
+    [76, 255, 184]
+  ];
+  const scaled = v * (stops.length - 1);
+  const idx = Math.min(stops.length - 2, Math.floor(scaled));
+  const frac = scaled - idx;
+  const p = stops[idx];
+  const q = stops[idx + 1];
+  const r = Math.round(p[0] + (q[0] - p[0]) * frac);
+  const g = Math.round(p[1] + (q[1] - p[1]) * frac);
+  const b = Math.round(p[2] + (q[2] - p[2]) * frac);
+  return [r, g, b];
+}
+
 async function tryLoadJsonFromCandidates(relativePath, baseCandidates) {
   for (const base of baseCandidates) {
     const url = `${base}/${relativePath}`;
@@ -322,6 +722,10 @@ function renderShotOptions() {
 }
 
 function getTimeExtentFromShotBundle(bundle) {
+  const avail = state.selectedManifest?.available_time_range_s;
+  if (Array.isArray(avail) && avail.length >= 2 && Number.isFinite(avail[0]) && Number.isFinite(avail[1]) && avail[1] > avail[0]) {
+    return { start: avail[0], end: avail[1] };
+  }
   const manifestRange = state.selectedManifest?.time_extent_s;
   if (manifestRange && Number.isFinite(manifestRange.start) && Number.isFinite(manifestRange.end)) {
     return { start: manifestRange.start, end: manifestRange.end };
@@ -530,9 +934,13 @@ function clampIntervalToTimeRange(start, end, timeExtent) {
 }
 
 function getRecommendedInterval() {
+  const rec = state.selectedManifest?.recommended_default_interval_s;
+  const timeExtent = getTimeExtentFromShotBundle(state.shotBundle);
+  if (Array.isArray(rec) && rec.length >= 2 && Number.isFinite(rec[0]) && Number.isFinite(rec[1])) {
+    return clampIntervalToTimeRange(rec[0], rec[1], timeExtent);
+  }
   const defaults = state.selectedManifest?.viewer_defaults;
   const duration = defaults?.interval_duration_s;
-  const timeExtent = getTimeExtentFromShotBundle(state.shotBundle);
 
   if (Number.isFinite(duration)) {
     return {
@@ -1660,6 +2068,348 @@ function hitTestHydro(event) {
   };
 }
 
+function drawSelchEventShading(ctx, pad, plotW, plotH, interval, events) {
+  for (const event of events) {
+    if (event.end_time_s < interval.start || event.start_time_s > interval.end) {
+      continue;
+    }
+    const es = Math.max(event.start_time_s, interval.start);
+    const ee = Math.min(event.end_time_s, interval.end);
+    const x0 = pad.left + ((es - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
+    const x1 = pad.left + ((ee - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
+    ctx.fillStyle = "rgba(255, 79, 216, 0.12)";
+    ctx.fillRect(x0, pad.top, Math.max(1, x1 - x0), plotH);
+  }
+}
+
+function renderSelectedChannelPanel() {
+  if (!state.shotBundle) {
+    el.selchUnavailable.hidden = false;
+    el.selchContent.hidden = true;
+    el.selchUnavailable.textContent = "Select a shot to load data.";
+    state.geometry.selch = null;
+    return;
+  }
+
+  const sc = state.shotBundle.selectedChannel;
+  if (!sc || !sc.available) {
+    el.selchUnavailable.hidden = false;
+    el.selchContent.hidden = true;
+    el.selchUnavailable.textContent = sc?.message || "Selected-channel mode not available for this shot.";
+    state.geometry.selch = null;
+    return;
+  }
+
+  el.selchUnavailable.hidden = true;
+  el.selchContent.hidden = false;
+
+  if (el.selchChannelWrap && el.selchChannelSelect) {
+    if (sc.multiChannel) {
+      el.selchChannelWrap.hidden = false;
+      const preferredOrder = sc.manifestDemo?.available_preview_cols;
+      const colsFromIndex = Array.isArray(sc.channelsIndex?.channels)
+        ? sc.channelsIndex.channels.map((c) => c.preview_col)
+        : [];
+      const cols =
+        Array.isArray(preferredOrder) && preferredOrder.length > 0
+          ? preferredOrder.filter((c) => sc.entryByCol && sc.entryByCol[String(c)])
+          : colsFromIndex;
+      if (el.selchChannelSelect.dataset.shotId !== String(state.selectedShotId)) {
+        el.selchChannelSelect.innerHTML = "";
+        cols.forEach((col) => {
+          const opt = document.createElement("option");
+          opt.value = String(col);
+          opt.textContent = `Preview col ${col}`;
+          el.selchChannelSelect.appendChild(opt);
+        });
+        el.selchChannelSelect.dataset.shotId = String(state.selectedShotId || "");
+      }
+      el.selchChannelSelect.value = String(sc.activePreviewCol ?? cols[0] ?? "");
+    } else {
+      el.selchChannelWrap.hidden = true;
+      el.selchChannelSelect.dataset.shotId = "";
+    }
+  }
+
+  const interval = getCurrentInterval();
+  const events = getEventList();
+  const pad = { left: 56, right: 8, top: 4, bottom: 18 };
+  let selchPlotW = 0;
+
+  el.selchSubtitle.textContent =
+    sc.meta?.selected_channel_label ||
+    `Preview col ${sc.meta?.selected_preview_col}, raw ch ${sc.meta?.selected_raw_channel}`;
+
+  const { t: tSpec, sxx, nf, nt, fortran } = sc.spec;
+
+  function drawSpec() {
+    const canvas = el.selchSpecCanvas;
+    const { ctx, width, height } = getCanvasSize(canvas, 236);
+    ctx.fillStyle = "rgba(8, 15, 31, 0.88)";
+    ctx.fillRect(0, 0, width, height);
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    selchPlotW = plotW;
+
+    let vmin = Infinity;
+    let vmax = -Infinity;
+    const i0s = lowerBoundSorted(tSpec, interval.start);
+    const i1s = upperBoundSorted(tSpec, interval.end) - 1;
+    if (i1s >= i0s) {
+      for (let ti = i0s; ti <= i1s; ti += 1) {
+        for (let fi = 0; fi < nf; fi += Math.max(1, Math.floor(nf / 48))) {
+          const v = spectrogramValue(sxx, nf, nt, fi, ti, fortran);
+          if (v < vmin) vmin = v;
+          if (v > vmax) vmax = v;
+        }
+      }
+    }
+    if (!Number.isFinite(vmin) || !Number.isFinite(vmax) || vmin === vmax) {
+      vmin = -100;
+      vmax = -20;
+    }
+    const margin = (vmax - vmin) * 0.04;
+    vmin -= margin;
+    vmax += margin;
+
+    drawSelchEventShading(ctx, pad, plotW, plotH, interval, events);
+
+    const img = ctx.createImageData(plotW, plotH);
+    for (let px = 0; px < plotW; px += 1) {
+      const tLin = interval.start + ((px + 0.5) / plotW) * (interval.end - interval.start);
+      let lo = 0;
+      let hi = tSpec.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (tSpec[mid] < tLin) {
+          lo = mid + 1;
+        } else {
+          hi = mid;
+        }
+      }
+      let ti = lo;
+      if (ti > 0 && Math.abs(tSpec[ti - 1] - tLin) < Math.abs(tSpec[ti] - tLin)) {
+        ti -= 1;
+      }
+      ti = clamp(ti, 0, nt - 1);
+      for (let py = 0; py < plotH; py += 1) {
+        const fn = nf - 1 - (py / Math.max(1, plotH - 1)) * (nf - 1);
+        const db = spectrogramValue(sxx, nf, nt, fn, ti, fortran);
+        const [r, g, b] = colorForSpecDbRgb(db, vmin, vmax);
+        const o = (py * plotW + px) * 4;
+        img.data[o] = r;
+        img.data[o + 1] = g;
+        img.data[o + 2] = b;
+        img.data[o + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, pad.left, pad.top);
+
+    const cursorNorm = (state.cursorTime - interval.start) / Math.max(1e-9, interval.end - interval.start);
+    const cursorX = pad.left + clamp(cursorNorm, 0, 1) * plotW;
+    ctx.strokeStyle = "rgba(114, 246, 255, 0.35)";
+    ctx.strokeRect(pad.left, pad.top, plotW, plotH);
+    ctx.strokeStyle = "rgba(255, 230, 109, 0.95)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cursorX, pad.top);
+    ctx.lineTo(cursorX, pad.top + plotH);
+    ctx.stroke();
+
+    ctx.fillStyle = "#9fb3d9";
+    ctx.font = "11px Space Grotesk";
+    ctx.fillText(`${interval.start.toFixed(2)} s`, pad.left, height - 5);
+    ctx.fillText(`${interval.end.toFixed(2)} s`, pad.left + plotW - 54, height - 5);
+    ctx.save();
+    ctx.translate(10, pad.top + plotH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText("Frequency", 0, 0);
+    ctx.restore();
+  }
+
+  function drawBand() {
+    const canvas = el.selchBandCanvas;
+    const { ctx, width, height } = getCanvasSize(canvas, 116);
+    ctx.fillStyle = "rgba(8, 15, 31, 0.88)";
+    ctx.fillRect(0, 0, width, height);
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const { t: tb, score, mask, threshold } = sc.band;
+    const i0b = lowerBoundSorted(tb, interval.start);
+    const i1b = upperBoundSorted(tb, interval.end) - 1;
+
+    if (mask && mask.length === score.length) {
+      for (let px = 0; px < plotW; px += 1) {
+        const tLin = interval.start + ((px + 0.5) / plotW) * (interval.end - interval.start);
+        let lo = 0;
+        let hi = tb.length - 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (tb[mid] < tLin) {
+            lo = mid + 1;
+          } else {
+            hi = mid;
+          }
+        }
+        let idx = lo;
+        if (idx > 0 && Math.abs(tb[idx - 1] - tLin) < Math.abs(tb[idx] - tLin)) {
+          idx -= 1;
+        }
+        idx = clamp(idx, 0, tb.length - 1);
+        if (mask[idx]) {
+          ctx.fillStyle = "rgba(114, 246, 255, 0.14)";
+          ctx.fillRect(pad.left + px, pad.top, 1, plotH);
+        }
+      }
+    }
+
+    drawSelchEventShading(ctx, pad, plotW, plotH, interval, events);
+
+    let ymin = Infinity;
+    let ymax = -Infinity;
+    if (i1b >= i0b) {
+      for (let i = i0b; i <= i1b; i += 1) {
+        const v = score[i];
+        if (v < ymin) ymin = v;
+        if (v > ymax) ymax = v;
+      }
+    }
+    if (!Number.isFinite(ymin)) {
+      ymin = 0;
+      ymax = 1;
+    }
+    if (Number.isFinite(threshold)) {
+      ymin = Math.min(ymin, threshold);
+      ymax = Math.max(ymax, threshold);
+    }
+    const yPad = (ymax - ymin) * 0.12 || 1e-6;
+    ymin -= yPad;
+    ymax += yPad;
+
+    ctx.strokeStyle = "rgba(114, 246, 255, 0.35)";
+    ctx.strokeRect(pad.left, pad.top, plotW, plotH);
+
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(156, 255, 87, 0.9)";
+    ctx.lineWidth = 1.4;
+    let started = false;
+    for (let i = i0b; i <= i1b; i += 1) {
+      const t = tb[i];
+      const x = pad.left + ((t - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
+      const y = pad.top + (1 - (score[i] - ymin) / Math.max(1e-9, ymax - ymin)) * plotH;
+      if (!started) {
+        ctx.moveTo(x, y);
+        started = true;
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.stroke();
+
+    if (Number.isFinite(threshold)) {
+      const ty = pad.top + (1 - (threshold - ymin) / Math.max(1e-9, ymax - ymin)) * plotH;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = "rgba(255, 107, 135, 0.88)";
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, ty);
+      ctx.lineTo(pad.left + plotW, ty);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    const cursorNormB = (state.cursorTime - interval.start) / Math.max(1e-9, interval.end - interval.start);
+    const cursorXB = pad.left + clamp(cursorNormB, 0, 1) * plotW;
+    ctx.strokeStyle = "rgba(255, 230, 109, 0.95)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cursorXB, pad.top);
+    ctx.lineTo(cursorXB, pad.top + plotH);
+    ctx.stroke();
+
+    ctx.fillStyle = "#9fb3d9";
+    ctx.font = "11px Space Grotesk";
+    ctx.fillText(`${interval.start.toFixed(2)} s`, pad.left, height - 4);
+  }
+
+  function drawWave() {
+    const canvas = el.selchWaveCanvas;
+    const { ctx, width, height } = getCanvasSize(canvas, 96);
+    ctx.fillStyle = "rgba(8, 15, 31, 0.88)";
+    ctx.fillRect(0, 0, width, height);
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const { t: tw, y: yw } = sc.signal;
+    const i0w = lowerBoundSorted(tw, interval.start);
+    const i1w = upperBoundSorted(tw, interval.end) - 1;
+
+    drawSelchEventShading(ctx, pad, plotW, plotH, interval, events);
+
+    if (i1w < i0w) {
+      ctx.fillStyle = "#9fb3d9";
+      ctx.font = "12px Space Grotesk";
+      ctx.fillText("No waveform samples in interval.", pad.left, pad.top + 24);
+    } else {
+      let ymin = Infinity;
+      let ymax = -Infinity;
+      for (let i = i0w; i <= i1w; i += 1) {
+        const v = yw[i];
+        if (v < ymin) ymin = v;
+        if (v > ymax) ymax = v;
+      }
+      const yPadW = (ymax - ymin) * 0.08 || 1e-6;
+      ymin -= yPadW;
+      ymax += yPadW;
+      ctx.strokeStyle = "rgba(114, 246, 255, 0.35)";
+      ctx.strokeRect(pad.left, pad.top, plotW, plotH);
+      const n = i1w - i0w + 1;
+      const maxPts = Math.ceil(plotW * 4);
+      const step = Math.max(1, Math.floor(n / maxPts));
+      ctx.beginPath();
+      ctx.strokeStyle = "rgba(114, 246, 255, 0.85)";
+      ctx.lineWidth = 1.2;
+      let startedW = false;
+      for (let i = i0w; i <= i1w; i += step) {
+        const t = tw[i];
+        const x = pad.left + ((t - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
+        const y = pad.top + (1 - (yw[i] - ymin) / Math.max(1e-9, ymax - ymin)) * plotH;
+        if (!startedW) {
+          ctx.moveTo(x, y);
+          startedW = true;
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+    }
+
+    const cursorNormW = (state.cursorTime - interval.start) / Math.max(1e-9, interval.end - interval.start);
+    const cursorXW = pad.left + clamp(cursorNormW, 0, 1) * plotW;
+    ctx.strokeStyle = "rgba(255, 230, 109, 0.95)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cursorXW, pad.top);
+    ctx.lineTo(cursorXW, pad.top + plotH);
+    ctx.stroke();
+  }
+
+  drawSpec();
+  drawBand();
+  drawWave();
+
+  const dist = sc.meta?.selected_distance_m;
+  const distStr = Number.isFinite(dist) ? ` · ~${dist.toFixed(1)} m along cable` : "";
+  const bh = sc.band.bandHz;
+  const bandStr = bh ? `${bh[0].toFixed(0)}–${bh[1].toFixed(0)} Hz band` : "Band-pass support";
+  el.selchCaption.textContent = `${bandStr}. Interval ${interval.start.toFixed(2)}–${interval.end.toFixed(2)} s, cursor ${state.cursorTime.toFixed(2)} s${distStr}.`;
+
+  state.geometry.selch = {
+    interval,
+    pad,
+    plotW: selchPlotW
+  };
+}
+
 function renderAllPanels() {
   syncCursorToInterval();
   updateCurrentIntervalLabel();
@@ -1667,6 +2417,7 @@ function renderAllPanels() {
   renderActiveEventLabel();
   renderDasPanel();
   renderHydroPanel();
+  renderSelectedChannelPanel();
   renderEventNavigation();
 }
 
@@ -1733,6 +2484,62 @@ function seekFromHydroPointer(event) {
   });
 }
 
+function hitTestSelchTime(event) {
+  const geo = state.geometry.selch;
+  if (!geo || !geo.plotW) {
+    return null;
+  }
+  const x = event.offsetX;
+  if (x < geo.pad.left || x > geo.pad.left + geo.plotW) {
+    return null;
+  }
+  const t =
+    geo.interval.start +
+    ((x - geo.pad.left) / Math.max(1e-9, geo.plotW)) * (geo.interval.end - geo.interval.start);
+  return {
+    time: t,
+    clientX: event.clientX,
+    clientY: event.clientY
+  };
+}
+
+function seekFromSelchPointer(event) {
+  const hit = hitTestSelchTime(event);
+  if (!hit) {
+    return;
+  }
+  seekCursorToTime(hit.time, "selected-channel view", {
+    announce: false,
+    deferred: true
+  });
+}
+
+function bindSelchCanvas(canvas) {
+  canvas.addEventListener("mousedown", (event) => {
+    state.draggingTarget = "selch";
+    seekFromSelchPointer(event);
+  });
+  canvas.addEventListener("click", (event) => {
+    const hit = hitTestSelchTime(event);
+    if (!hit) {
+      return;
+    }
+    seekCursorToTime(hit.time, "selected-channel view", {
+      announce: true,
+      deferred: false
+    });
+  });
+  canvas.addEventListener(
+    "mousemove",
+    (event) => {
+      if (state.draggingTarget === "selch") {
+        seekFromSelchPointer(event);
+      }
+    },
+    { passive: true }
+  );
+}
+
 function onGlobalPointerUp() {
   state.draggingTarget = null;
   if (el.mapSvg) {
@@ -1763,6 +2570,246 @@ function getManifestCandidateUrls(shotOption) {
 function getBaseDir(url) {
   const idx = url.lastIndexOf("/");
   return idx >= 0 ? url.slice(0, idx) : "";
+}
+
+function buildMetaFromChannelEntry(entry) {
+  if (!entry) {
+    return {};
+  }
+  return {
+    selected_channel_label: entry.label,
+    selected_preview_col: entry.preview_col,
+    selected_raw_channel: entry.raw_das_channel_index,
+    selected_distance_m: entry.distance_m
+  };
+}
+
+function buildSelectedChannelPayloadFromNpz(signalNpz, specNpz, bandNpz) {
+  const tSigRec = signalNpz.t_s;
+  const sigRec = signalNpz.signal;
+  if (!tSigRec?.data || !sigRec?.data) {
+    throw new Error("signal NPZ missing t_s/signal arrays");
+  }
+
+  const tSpecRec = specNpz.t_s;
+  const freqRec = specNpz.freqs_hz;
+  const sxxRec = specNpz.Sxx_db;
+  if (!tSpecRec?.data || !freqRec?.data || !sxxRec?.data) {
+    throw new Error("spectrogram NPZ incomplete");
+  }
+
+  const shape = sxxRec.shape || [];
+  if (shape.length < 2) {
+    throw new Error("Sxx_db must be 2-D");
+  }
+  const nf = shape[0];
+  const nt = shape[1];
+  if (tSpecRec.shape[0] !== nt || freqRec.shape[0] !== nf) {
+    console.warn("Spectrogram axis lengths do not match Sxx_db shape; continuing.");
+  }
+
+  const tBandRec = bandNpz.t_s;
+  const scoreRec = bandNpz.bandpass_support_score;
+  if (!tBandRec?.data || !scoreRec?.data) {
+    throw new Error("band-pass NPZ incomplete");
+  }
+
+  let maskArr = null;
+  if (bandNpz.signal_present_mask?.data) {
+    maskArr = bandNpz.signal_present_mask.data;
+  }
+
+  let threshold = null;
+  if (bandNpz.threshold?.data?.length) {
+    threshold = Number(bandNpz.threshold.data[0]);
+  }
+
+  let bandHz = null;
+  if (bandNpz.band_hz?.data && bandNpz.band_hz.shape[0] >= 2) {
+    bandHz = [Number(bandNpz.band_hz.data[0]), Number(bandNpz.band_hz.data[1])];
+  }
+
+  return {
+    signal: {
+      t: tSigRec.data,
+      y: sigRec.data
+    },
+    spec: {
+      t: tSpecRec.data,
+      freqs: freqRec.data,
+      sxx: sxxRec.data,
+      nf,
+      nt,
+      fortran: !!sxxRec.fortran
+    },
+    band: {
+      t: tBandRec.data,
+      score: scoreRec.data,
+      mask: maskArr,
+      threshold,
+      bandHz
+    }
+  };
+}
+
+async function loadSelectedChannelNpzTriple(baseDir, sigRel, specRel, bandRel) {
+  if (!sigRel || !specRel || !bandRel) {
+    throw new Error("Missing NPZ path for selected-channel triple");
+  }
+  const [signalNpz, specNpz, bandNpz] = await Promise.all([
+    fetchNpz(`${baseDir}/${sigRel}`),
+    fetchNpz(`${baseDir}/${specRel}`),
+    fetchNpz(`${baseDir}/${bandRel}`)
+  ]);
+  return buildSelectedChannelPayloadFromNpz(signalNpz, specNpz, bandNpz);
+}
+
+function applySelectedChannelPayload(sc, payload, entry) {
+  sc.signal = payload.signal;
+  sc.spec = payload.spec;
+  sc.band = payload.band;
+  if (entry) {
+    sc.meta = buildMetaFromChannelEntry(entry);
+  }
+}
+
+async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
+  const files = manifest?.files || {};
+  const demo = manifest?.selected_channel_demo;
+
+  if (manifest?.selected_channel_mode_available === false) {
+    return {
+      available: false,
+      message: "Selected-channel mode not available for this shot (manifest flag)."
+    };
+  }
+  if (!demo || !files.selected_channel_bundle) {
+    return { available: false, message: "Selected-channel mode not available for this shot." };
+  }
+
+  const baseDir = getBaseDir(manifestUrl);
+
+  if (files.selected_channels_index) {
+    let index;
+    try {
+      index = await fetchJson(`${baseDir}/${files.selected_channels_index}`);
+    } catch (error) {
+      return { available: false, message: `Could not load selected-channels index: ${summarizeError(error)}` };
+    }
+    const channels = index.channels;
+    if (!Array.isArray(channels) || channels.length === 0) {
+      return { available: false, message: "Selected-channels index is empty." };
+    }
+    const entryByCol = {};
+    channels.forEach((ch) => {
+      if (ch && Number.isFinite(ch.preview_col)) {
+        entryByCol[String(ch.preview_col)] = ch;
+      }
+    });
+    const defaultCol = Number(
+      index.default_preview_col ?? demo.default_preview_col ?? demo.preview_column ?? channels[0].preview_col
+    );
+    const defaultEntry = entryByCol[String(defaultCol)];
+    if (!defaultEntry?.files) {
+      return { available: false, message: `Default preview col ${defaultCol} missing from selected-channels index.` };
+    }
+    try {
+      const f = defaultEntry.files;
+      const payload = await loadSelectedChannelNpzTriple(baseDir, f.signal, f.spectrogram, f.bandpass_score);
+      return {
+        available: true,
+        multiChannel: channels.length > 1,
+        baseDir,
+        manifestDemo: demo,
+        channelsIndex: index,
+        entryByCol,
+        activePreviewCol: defaultCol,
+        channelCache: {
+          [String(defaultCol)]: payload
+        },
+        meta: buildMetaFromChannelEntry(defaultEntry),
+        ...payload
+      };
+    } catch (error) {
+      return {
+        available: false,
+        message: `Selected-channel NPZ load failed: ${summarizeError(error)}`
+      };
+    }
+  }
+
+  let meta;
+  try {
+    meta = await fetchJson(`${baseDir}/${files.selected_channel_bundle}`);
+  } catch (error) {
+    return { available: false, message: `Could not load selected-channel bundle: ${summarizeError(error)}` };
+  }
+
+  const sigRel = files.selected_channel_signal || meta?.bundle_files?.signal_npz;
+  const specRel = files.selected_channel_spectrogram || meta?.bundle_files?.spectrogram_npz;
+  const bandRel = files.selected_channel_bandpass_score || meta?.bundle_files?.bandpass_score_npz;
+
+  if (!sigRel || !specRel || !bandRel) {
+    return { available: false, message: "Selected-channel export paths are incomplete in the manifest." };
+  }
+
+  try {
+    const payload = await loadSelectedChannelNpzTriple(baseDir, sigRel, specRel, bandRel);
+    return {
+      available: true,
+      multiChannel: false,
+      baseDir,
+      manifestDemo: demo,
+      meta,
+      ...payload
+    };
+  } catch (error) {
+    return {
+      available: false,
+      message: `Selected-channel NPZ load failed: ${summarizeError(error)}`
+    };
+  }
+}
+
+async function switchSelectedChannelToPreviewCol(previewCol) {
+  const sc = state.shotBundle?.selectedChannel;
+  if (!sc?.available || !sc.multiChannel) {
+    return;
+  }
+  const key = String(previewCol);
+  const entry = sc.entryByCol?.[key];
+  if (!entry?.files) {
+    return;
+  }
+  if (sc.activePreviewCol === previewCol) {
+    scheduleMainRender();
+    return;
+  }
+  const cached = sc.channelCache[key];
+  if (cached) {
+    applySelectedChannelPayload(sc, cached, entry);
+    sc.activePreviewCol = previewCol;
+    if (el.selchChannelSelect) {
+      el.selchChannelSelect.value = key;
+    }
+    scheduleMainRender();
+    return;
+  }
+  updateDataStatus(`Loading Orca selected-channel preview col ${previewCol}…`);
+  try {
+    const f = entry.files;
+    const payload = await loadSelectedChannelNpzTriple(sc.baseDir, f.signal, f.spectrogram, f.bandpass_score);
+    sc.channelCache[key] = payload;
+    applySelectedChannelPayload(sc, payload, entry);
+    sc.activePreviewCol = previewCol;
+    if (el.selchChannelSelect) {
+      el.selchChannelSelect.value = key;
+    }
+    updateDataStatus(`Selected-channel preview col ${previewCol} loaded.`);
+    scheduleMainRender();
+  } catch (error) {
+    updateDataStatus(`Selected-channel load failed: ${summarizeError(error)}`);
+  }
 }
 
 async function loadManifestForShot(shotOption) {
@@ -1892,6 +2939,8 @@ async function onShotChanged() {
   try {
     if (manifestResult.data && manifestResult.url) {
       state.shotBundle = await loadBundleFromManifest(manifestResult.data, manifestResult.url);
+      await attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, state.shotBundle);
+      state.shotBundle.selectedChannel = await loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url);
       resetMapViewport();
       resetMapTimelineForShot();
       state.eventCount = getEventList().length;
@@ -1912,6 +2961,10 @@ async function onShotChanged() {
     const fallbackBundle = await loadFallbackBundle(selectedShotId);
     if (fallbackBundle) {
       state.shotBundle = fallbackBundle;
+      state.shotBundle.selectedChannel = {
+        available: false,
+        message: "Selected-channel mode not available for this shot."
+      };
       resetMapViewport();
       resetMapTimelineForShot();
       state.selectedManifest = null;
@@ -2012,6 +3065,20 @@ function bindEvents() {
   el.hydroSvg.addEventListener("mouseleave", () => {
     hideTooltip();
   }, { passive: true });
+
+  bindSelchCanvas(el.selchSpecCanvas);
+  bindSelchCanvas(el.selchBandCanvas);
+  bindSelchCanvas(el.selchWaveCanvas);
+
+  if (el.selchChannelSelect) {
+    el.selchChannelSelect.addEventListener("change", () => {
+      const v = Number(el.selchChannelSelect.value);
+      if (!Number.isFinite(v)) {
+        return;
+      }
+      void switchSelectedChannelToPreviewCol(v);
+    });
+  }
 
   el.mapSvg.addEventListener("wheel", onMapWheel, { passive: false });
   el.mapSvg.addEventListener("dblclick", onMapDoubleClick);

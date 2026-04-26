@@ -7,6 +7,7 @@ This directory contains the frontend synchronized viewer for the thesis MVP scop
 - `index.html`: existing layout with synchronized render containers.
 - `styles.css`: dark scientific UI theme and panel/component styling.
 - `app.js`: synchronized interval handling, panel rendering, playback, and event navigation.
+- `vendor/fflate.min.js`: tiny unzip helper for NumPy `.npz` (ZIP) loads in the browser.
 
 ## Implemented synchronized views
 
@@ -24,6 +25,10 @@ The same selected interval (`start` / `end`) now drives all three panels:
 	- renders source/recorder positions from `shot_metadata.json`, `recorders_summary.json`, and manifest source ground truth,
 	- displays synchronized interval context,
 	- falls back to metadata-only mode when spatial coordinates are unavailable.
+- Selected-channel DAS panel (Orca Stage 2 demo):
+	- loads `selected_channels_index.json` when present (multiple preview columns), otherwise the legacy single triple `selected_channel_*.npz`,
+	- shows spectrogram, band-pass **support** score (with threshold and optional mask), and waveform; **Preview column** dropdown switches among exported Orca channels (default 189, 12, 50),
+	- hidden with a short message when the shot has no bundle (e.g. `whales_humpback` today).
 
 ## Synchronization behavior
 
@@ -46,6 +51,7 @@ The same selected interval (`start` / `end`) now drives all three panels:
 - Synchronized cursor movement:
 	- click inside DAS heatmap to move shared cursor,
 	- click inside hydrophone view to move shared cursor,
+	- click or drag inside selected-channel canvases to move the shared cursor,
 	- lightweight drag-to-seek is supported in DAS and hydro views.
 - Interactive feedback:
 	- current interval and cursor time are always visible,
@@ -60,6 +66,8 @@ For each selected shot, frontend attempts to load:
 
 - `../output/shots/<shot_id>/viewer_manifest.json`
 - files listed in manifest (`shot_metadata`, `recorders_summary`, `events`, `hydrophone_activity`, `das_activity`, `situation`)
+- if `viewer/das_activity.json` / `hydrophone_activity.json` are absent, the viewer falls back to `das_activity_map.npz` and `hydrophone_event_score.npz` in the shot directory (plus optional `hydrophone_event_score_metadata.json` for the threshold line)
+- optional selected-channel NPZs when present (see `selected_channel_demo` in the manifest)
 
 ### Fallback mode
 
@@ -73,8 +81,8 @@ Fallback mode keeps synchronized interval/events but uses metadata-driven placeh
 
 ## Known simplifications
 
-- Browser-side `.npz` parsing is not used in this step.
-- DAS and hydro panels depend on JSON viewer exports (`viewer/das_activity.json`, `hydrophone_activity.json`).
+- Selected-channel `.npz` parsing supports the dtypes used in the Orca export (`float32` time series, `uint8` mask, etc.); exotic dtypes may require extending `parseNpyArrayBuffer`.
+- DAS activity and hydro **main** panels still depend on JSON viewer exports (`viewer/das_activity.json`, `hydrophone_activity.json`).
 - Map panel currently renders lightweight source/recorder context, not full bathymetry/fiber-track geometry rendering.
 
 ## Local testing

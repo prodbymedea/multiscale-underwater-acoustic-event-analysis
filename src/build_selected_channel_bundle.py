@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Build a compact single-channel DAS bundle for frontend demo (no HDF5 at runtime).
+Build compact selected-channel DAS bundles for the frontend (no HDF5 at runtime).
 
-Stage 1 scope: whales_orca only, one default channel (preview col 189 / raw ch 945 by default).
+Stage 2 (default): whales_orca exports preview columns 189, 12, and 50 — per-column NPZs plus
+`selected_channels_index.json`; legacy `selected_channel_*.npz` duplicates the default column (189).
 
 Outputs (under output/shots/<shot>/):
-  - selected_channel_bundle.json   — metadata + file index
-  - selected_channel_signal.npz    — native-rate median-centered waveform
-  - selected_channel_spectrogram.npz — STFT magnitude in dB
-  - selected_channel_bandpass_score.npz — optional Orca band support score (not whale probability)
+  - selected_channels_index.json — maps preview_col → NPZ filenames
+  - selected_channel_p<col>_{signal,spectrogram,bandpass_score}.npz per exported column
+  - selected_channel_bundle.json — metadata for default preview column
+  - selected_channel_{signal,spectrogram,bandpass_score}.npz — copy of default column (backward compatible)
 
-Optionally patches existing viewer_manifest.json to reference these files (does not remove keys).
+Patches viewer_manifest.json with `files.selected_channels_index` and `selected_channel_demo` (v2 when >1 col).
 
 Usage:
   python3 src/build_selected_channel_bundle.py --shot whales_orca
+  python3 src/build_selected_channel_bundle.py --shot whales_orca --preview-cols 189,12,50
   python3 src/build_selected_channel_bundle.py --shot whales_orca --preview-col 189 --band 2000-2350
 """
 
@@ -21,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +39,9 @@ ORCA_FILE = "2022-01-26--04-47-42--Orca.h5"
 SHOT_SPECS: dict[str, tuple[str, str]] = {
     "whales_orca": (ORCA_SUBDIR, ORCA_FILE),
 }
+
+# Stage 2 Orca: small fixed set of recommended preview columns (native preview grid indices).
+ORCA_STAGE2_PREVIEW_COLS: list[int] = [189, 12, 50]
 
 
 def _mad_threshold(x: np.ndarray, k: float) -> float:
@@ -103,6 +109,8 @@ def _patch_viewer_manifest(
     preview_col: int,
     raw_ch: int,
     band: list[float],
+    index_name: str | None = None,
+    available_preview_cols: list[int] | None = None,
 ) -> None:
     man_p = shot_dir / "viewer_manifest.json"
     if not man_p.is_file():
@@ -115,20 +123,31 @@ def _patch_viewer_manifest(
     files["selected_channel_signal"] = "selected_channel_signal.npz"
     files["selected_channel_spectrogram"] = "selected_channel_spectrogram.npz"
     files["selected_channel_bandpass_score"] = "selected_channel_bandpass_score.npz"
+    if index_name:
+        files["selected_channels_index"] = index_name
 
-    manifest["selected_channel_demo"] = {
-        "schema_version": "selected_channel_demo_v1",
+    cols = list(available_preview_cols) if available_preview_cols else [preview_col]
+    stage2 = len(cols) > 1
+    demo: dict[str, Any] = {
+        "schema_version": "selected_channel_demo_v2" if stage2 else "selected_channel_demo_v1",
         "shot_id": shot_id,
         "preview_column": preview_col,
         "raw_das_channel_index": raw_ch,
         "recommended_band_hz": band,
         "bundle_metadata_file": _shot_rel(shot_dir, shot_dir / bundle_name),
         "notes": (
-            "Single-channel native-rate export for Orca demo. "
+            "Orca selected-channel native-rate NPZ exports (Stage 2: multiple preview columns). "
             "Band-pass score is DAS support only, not whale probability. "
             "Does not replace the DAS activity map."
         ),
     }
+    if stage2:
+        demo["stage"] = 2
+        demo["default_preview_col"] = preview_col
+        demo["available_preview_cols"] = cols
+        if index_name:
+            demo["index_file"] = index_name
+    manifest["selected_channel_demo"] = demo
 
     notes = manifest.setdefault("notes", [])
     tag = "selected_channel_demo: compact NPZ bundle avoids HDF5 at frontend load time."
@@ -144,69 +163,30 @@ def _parse_band(s: str) -> tuple[float, float]:
     return float(a), float(b)
 
 
-def parse_args() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Build selected-channel NPZ bundle for viewer demo")
-    ap.add_argument("--shot", default="whales_orca", choices=("whales_orca",))
-    ap.add_argument("--shot-dir", type=Path, default=None)
-    ap.add_argument("--preview-col", type=int, default=-1, help="Override preview column (default: from summaries)")
-    ap.add_argument("--band", type=str, default="", help="f_lo-f_hi Hz, e.g. 2000-2350")
-    ap.add_argument("--mad-k", type=float, default=3.0)
-    ap.add_argument("--envelope-rms-ms", type=float, default=40.0)
-    ap.add_argument(
-        "--spectrogram-nperseg",
-        type=int,
-        default=512,
-        help="STFT length at native DAS fs (~9.8 Hz freq resolution at 5 kHz)",
-    )
-    ap.add_argument("--spectrogram-noverlap", type=int, default=384)
-    ap.add_argument("--no-patch-manifest", action="store_true", help="Do not merge paths into viewer_manifest.json")
-    return ap.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    shot_id = args.shot
-    if shot_id not in SHOT_SPECS:
-        raise SystemExit(f"Only {list(SHOT_SPECS)} supported in Stage 1.")
-
-    shot_dir = (args.shot_dir or (REPO_ROOT / "output" / "shots" / shot_id)).resolve()
-    shot_dir.mkdir(parents=True, exist_ok=True)
-
-    def_col, def_lo, def_hi = _load_defaults_from_summaries(shot_dir)
-    preview_col = int(args.preview_col) if args.preview_col >= 0 else def_col
-    if args.band.strip():
-        f_lo, f_hi = _parse_band(args.band.strip())
-    else:
-        f_lo, f_hi = def_lo, def_hi
-
-    pre_meta_p = shot_dir / "das_preprocessing_metadata.json"
-    pre_npz_p = shot_dir / "das_preprocessed_preview.npz"
-    ev_p = shot_dir / "events.json"
-    hydro_npz_p = shot_dir / "hydrophone_event_score.npz"
-    hydro_meta_p = shot_dir / "hydrophone_event_score_metadata.json"
-    shot_meta_p = shot_dir / "shot_metadata.json"
-
-    for p in (pre_meta_p, pre_npz_p, ev_p, hydro_npz_p):
-        if not p.is_file():
-            raise SystemExit(f"Missing required file: {p}")
-
-    with open(pre_meta_p, encoding="utf-8") as f:
-        pre_meta = json.load(f)
-    sel = pre_meta["selected_interval"]
-    start_idx, end_idx = int(sel["start_idx"]), int(sel["end_idx"])
-
-    z = np.load(pre_npz_p)
-    channel_indices = np.asarray(z["channel_indices"], dtype=np.int64)
-    distances_m = np.asarray(z["distances_m"], dtype=np.float64)
+def _export_preview_column_npzs(
+    *,
+    shot_dir: Path,
+    shot_id: str,
+    preview_col: int,
+    f_lo: float,
+    f_hi: float,
+    args: argparse.Namespace,
+    start_idx: int,
+    end_idx: int,
+    channel_indices: np.ndarray,
+    distances_m: np.ndarray,
+    h5_path: Path,
+    ev_p: Path,
+    hydro_npz_p: Path,
+    hydro_meta_p: Path | None,
+    shot_meta_p: Path | None,
+    npz_stem: str,
+) -> dict[str, Any]:
+    """Write signal / spectrogram / band-pass NPZs for one preview column; return bundle JSON dict."""
     if preview_col < 0 or preview_col >= len(channel_indices):
         raise SystemExit(f"preview_col {preview_col} out of range [0, {len(channel_indices)})")
     raw_ch = int(channel_indices[preview_col])
     dist_m = float(distances_m[preview_col])
-
-    subdir, fname = SHOT_SPECS[shot_id]
-    h5_path = resolve_shot_h5(subdir, fname)
-    if not h5_path.is_file():
-        raise SystemExit(f"Missing HDF5 for export: {h5_path}")
 
     with h5py.File(h5_path, "r") as f:
         das = f["DAS"]
@@ -218,7 +198,6 @@ def main() -> None:
     n = signal.shape[0]
     t_native = (start_idx / fs_hz + np.arange(n, dtype=np.float64) / fs_hz).astype(np.float32)
 
-    # --- Spectrogram (native rate, full band up to Nyquist for viewer exploration)
     nperseg = int(args.spectrogram_nperseg)
     noverlap = int(args.spectrogram_noverlap)
     freqs, t_spec, Sxx = spectrogram(
@@ -232,7 +211,6 @@ def main() -> None:
     )
     Sxx_db = (10.0 * np.log10(np.maximum(Sxx, 1e-20))).astype(np.float32)
 
-    # --- Band-pass score (same definition as orca_bandpass baseline)
     sos = _band_sos(fs_hz, f_lo, f_hi)
     filtered = sosfiltfilt(sos, raw)
     envelope = np.abs(hilbert(filtered))
@@ -241,10 +219,9 @@ def main() -> None:
     thr = float(_mad_threshold(bandpass_support_score.astype(np.float64), args.mad_k))
     signal_present_mask = (bandpass_support_score > thr).astype(np.uint8)
 
-    sig_path = shot_dir / "selected_channel_signal.npz"
-    spec_path = shot_dir / "selected_channel_spectrogram.npz"
-    bp_path = shot_dir / "selected_channel_bandpass_score.npz"
-    bundle_path = shot_dir / "selected_channel_bundle.json"
+    sig_path = shot_dir / f"{npz_stem}_signal.npz"
+    spec_path = shot_dir / f"{npz_stem}_spectrogram.npz"
+    bp_path = shot_dir / f"{npz_stem}_bandpass_score.npz"
 
     np.savez_compressed(
         sig_path,
@@ -282,7 +259,7 @@ def main() -> None:
     )
 
     source_gt: dict[str, Any] = {"available": False}
-    if shot_meta_p.is_file():
+    if shot_meta_p and shot_meta_p.is_file():
         with open(shot_meta_p, encoding="utf-8") as f:
             sm = json.load(f)
         src = sm.get("source") or {}
@@ -302,7 +279,9 @@ def main() -> None:
         "selected_preview_col": preview_col,
         "selected_raw_channel": raw_ch,
         "selected_distance_m": dist_m,
-        "selected_channel_label": f"Orca DAS raw ch {raw_ch} (preview col {preview_col}, ~{dist_m:.1f} m along cable)",
+        "selected_channel_label": (
+            f"Orca DAS raw ch {raw_ch} (preview col {preview_col}, ~{dist_m:.1f} m along cable)"
+        ),
         "time_range_s": [t0, t1],
         "sampling_rate_hz": fs_hz,
         "recommended_bandpass_hz": [f_lo, f_hi],
@@ -338,11 +317,11 @@ def main() -> None:
         "events_file": _shot_rel(shot_dir, ev_p),
         "hydrophone_score_file": _shot_rel(shot_dir, hydro_npz_p),
         "hydrophone_score_metadata_file": _shot_rel(shot_dir, hydro_meta_p)
-        if hydro_meta_p.is_file()
+        if hydro_meta_p and hydro_meta_p.is_file()
         else None,
         "source_ground_truth": source_gt,
         "bundle_files": {
-            "metadata": _shot_rel(shot_dir, bundle_path),
+            "metadata": "selected_channel_bundle.json",
             "signal_npz": _shot_rel(shot_dir, sig_path),
             "spectrogram_npz": _shot_rel(shot_dir, spec_path),
             "bandpass_score_npz": _shot_rel(shot_dir, bp_path),
@@ -351,32 +330,195 @@ def main() -> None:
             "shot_dir": _repo_rel(shot_dir),
         },
         "notes": [
-            "Frontend should load this bundle instead of HDF5 for the default Orca single-channel demo.",
+            "Per-preview-column NPZ bundle for Orca selected-channel viewer (no HDF5 in browser).",
             "DAS activity map and hydrophone pipeline outputs remain the primary synchronized layers.",
             "Band-pass score is optional DAS-side support for selected-channel view only.",
         ],
     }
+    return bundle
 
+
+def parse_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="Build selected-channel NPZ bundle for viewer demo")
+    ap.add_argument("--shot", default="whales_orca", choices=("whales_orca",))
+    ap.add_argument("--shot-dir", type=Path, default=None)
+    ap.add_argument(
+        "--preview-col",
+        type=int,
+        default=-1,
+        help="Export only this preview column (-1: use --preview-cols or Stage-2 default set)",
+    )
+    ap.add_argument(
+        "--preview-cols",
+        type=str,
+        default="",
+        help=f"Comma-separated preview columns (default: {'/'.join(str(c) for c in ORCA_STAGE2_PREVIEW_COLS)} when --preview-col is -1)",
+    )
+    ap.add_argument("--band", type=str, default="", help="f_lo-f_hi Hz, e.g. 2000-2350")
+    ap.add_argument("--mad-k", type=float, default=3.0)
+    ap.add_argument("--envelope-rms-ms", type=float, default=40.0)
+    ap.add_argument(
+        "--spectrogram-nperseg",
+        type=int,
+        default=512,
+        help="STFT length at native DAS fs (~9.8 Hz freq resolution at 5 kHz)",
+    )
+    ap.add_argument("--spectrogram-noverlap", type=int, default=384)
+    ap.add_argument("--no-patch-manifest", action="store_true", help="Do not merge paths into viewer_manifest.json")
+    return ap.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    shot_id = args.shot
+    if shot_id not in SHOT_SPECS:
+        raise SystemExit(f"Only {list(SHOT_SPECS)} supported in Stage 1.")
+
+    shot_dir = (args.shot_dir or (REPO_ROOT / "output" / "shots" / shot_id)).resolve()
+    shot_dir.mkdir(parents=True, exist_ok=True)
+
+    _, def_lo, def_hi = _load_defaults_from_summaries(shot_dir)
+    if args.band.strip():
+        f_lo, f_hi = _parse_band(args.band.strip())
+    else:
+        f_lo, f_hi = def_lo, def_hi
+
+    if int(args.preview_col) >= 0:
+        preview_cols = [int(args.preview_col)]
+    elif args.preview_cols.strip():
+        preview_cols = [int(x.strip()) for x in args.preview_cols.split(",") if x.strip()]
+    else:
+        preview_cols = list(ORCA_STAGE2_PREVIEW_COLS)
+
+    default_preview_col = 189 if 189 in preview_cols else int(preview_cols[0])
+
+    pre_meta_p = shot_dir / "das_preprocessing_metadata.json"
+    pre_npz_p = shot_dir / "das_preprocessed_preview.npz"
+    ev_p = shot_dir / "events.json"
+    hydro_npz_p = shot_dir / "hydrophone_event_score.npz"
+    hydro_meta_p = shot_dir / "hydrophone_event_score_metadata.json"
+    shot_meta_p = shot_dir / "shot_metadata.json"
+
+    for p in (pre_meta_p, pre_npz_p, ev_p, hydro_npz_p):
+        if not p.is_file():
+            raise SystemExit(f"Missing required file: {p}")
+
+    with open(pre_meta_p, encoding="utf-8") as f:
+        pre_meta = json.load(f)
+    sel = pre_meta["selected_interval"]
+    start_idx, end_idx = int(sel["start_idx"]), int(sel["end_idx"])
+
+    z = np.load(pre_npz_p)
+    channel_indices = np.asarray(z["channel_indices"], dtype=np.int64)
+    distances_m = np.asarray(z["distances_m"], dtype=np.float64)
+
+    subdir, fname = SHOT_SPECS[shot_id]
+    h5_path = resolve_shot_h5(subdir, fname)
+    if not h5_path.is_file():
+        raise SystemExit(f"Missing HDF5 for export: {h5_path}")
+
+    index_channels: list[dict[str, Any]] = []
+    bundle_for_default: dict[str, Any] | None = None
+    raw_ch_default = 0
+    last_sxx_shape: tuple[int, ...] = ()
+    last_n = 0
+    last_fs = 5000.0
+
+    for pc in preview_cols:
+        stem = f"selected_channel_p{pc}"
+        bundle = _export_preview_column_npzs(
+            shot_dir=shot_dir,
+            shot_id=shot_id,
+            preview_col=int(pc),
+            f_lo=f_lo,
+            f_hi=f_hi,
+            args=args,
+            start_idx=start_idx,
+            end_idx=end_idx,
+            channel_indices=channel_indices,
+            distances_m=distances_m,
+            h5_path=h5_path,
+            ev_p=ev_p,
+            hydro_npz_p=hydro_npz_p,
+            hydro_meta_p=hydro_meta_p if hydro_meta_p.is_file() else None,
+            shot_meta_p=shot_meta_p,
+            npz_stem=stem,
+        )
+        sig_name = f"{stem}_signal.npz"
+        index_channels.append(
+            {
+                "preview_col": int(pc),
+                "raw_das_channel_index": int(bundle["selected_raw_channel"]),
+                "distance_m": float(bundle["selected_distance_m"]),
+                "label": str(bundle["selected_channel_label"]),
+                "files": {
+                    "signal": sig_name,
+                    "spectrogram": f"{stem}_spectrogram.npz",
+                    "bandpass_score": f"{stem}_bandpass_score.npz",
+                },
+            }
+        )
+        if int(pc) == default_preview_col:
+            bundle_for_default = bundle
+            raw_ch_default = int(bundle["selected_raw_channel"])
+            # legacy filenames (default channel = 189 typically)
+            shutil.copyfile(shot_dir / sig_name, shot_dir / "selected_channel_signal.npz")
+            shutil.copyfile(shot_dir / f"{stem}_spectrogram.npz", shot_dir / "selected_channel_spectrogram.npz")
+            shutil.copyfile(shot_dir / f"{stem}_bandpass_score.npz", shot_dir / "selected_channel_bandpass_score.npz")
+            last_n = int(np.load(shot_dir / sig_name)["t_s"].shape[0])
+            last_fs = float(bundle["sampling_rate_hz"])
+            spec_f = shot_dir / f"{stem}_spectrogram.npz"
+            if spec_f.is_file():
+                last_sxx_shape = tuple(np.load(spec_f)["Sxx_db"].shape)
+
+    if bundle_for_default is None:
+        raise SystemExit(f"default_preview_col {default_preview_col} not in exported columns {preview_cols}")
+
+    bundle_for_default["bundle_files"] = {
+        "metadata": "selected_channel_bundle.json",
+        "signal_npz": "selected_channel_signal.npz",
+        "spectrogram_npz": "selected_channel_spectrogram.npz",
+        "bandpass_score_npz": "selected_channel_bandpass_score.npz",
+    }
+    bundle_path = shot_dir / "selected_channel_bundle.json"
     with open(bundle_path, "w", encoding="utf-8") as f:
-        json.dump(bundle, f, indent=2, ensure_ascii=False)
+        json.dump(bundle_for_default, f, indent=2, ensure_ascii=False)
+
+    index_doc: dict[str, Any] = {
+        "schema_version": "selected_channels_index_v1",
+        "shot_id": shot_id,
+        "default_preview_col": default_preview_col,
+        "recommended_bandpass_hz": [f_lo, f_hi],
+        "channels": index_channels,
+        "notes": [
+            "Maps preview_column to per-channel NPZ triples for Orca Stage-2 viewer.",
+            "Legacy filenames selected_channel_*.npz duplicate the default_preview_col exports.",
+        ],
+    }
+    index_path = shot_dir / "selected_channels_index.json"
+    with open(index_path, "w", encoding="utf-8") as f:
+        json.dump(index_doc, f, indent=2, ensure_ascii=False)
 
     if not args.no_patch_manifest:
         _patch_viewer_manifest(
             shot_dir,
             bundle_name=bundle_path.name,
             shot_id=shot_id,
-            preview_col=preview_col,
-            raw_ch=raw_ch,
+            preview_col=default_preview_col,
+            raw_ch=raw_ch_default,
             band=[f_lo, f_hi],
+            index_name=index_path.name,
+            available_preview_cols=list(preview_cols),
         )
 
-    print(f"Default channel: preview_col={preview_col} raw_ch={raw_ch} band={f_lo}-{f_hi} Hz")
+    print(f"Exported preview columns: {preview_cols} (default={default_preview_col}) band={f_lo}-{f_hi} Hz")
+    print(f"Saved {index_path.name} ({len(index_channels)} channels)")
     print(f"Saved {bundle_path.name}")
-    print(f"Saved {sig_path.name} ({n} samples @ {fs_hz} Hz)")
-    print(f"Saved {spec_path.name} Sxx_db shape {Sxx_db.shape}")
-    print(f"Saved {bp_path.name}")
+    print(f"Legacy selected_channel_*.npz aligned to preview_col={default_preview_col}")
+    if last_sxx_shape:
+        print(f"Last spectrogram Sxx_db shape {last_sxx_shape}, ~{last_n} samples @ {last_fs} Hz")
     if not args.no_patch_manifest:
-        print("Patched viewer_manifest.json with selected_channel_demo + file paths")
+        print("Patched viewer_manifest.json (Stage 2 selected-channel index + demo)")
 
 
 if __name__ == "__main__":

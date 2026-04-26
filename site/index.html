@@ -72,6 +72,34 @@
           </div>
         </article>
 
+        <article class="panel panel-selected-channel" aria-labelledby="selch-heading">
+          <h2 id="selch-heading">Selected-channel DAS (Orca demo)</h2>
+          <p id="selch-unavailable" class="selch-unavailable" hidden>Selected-channel mode not available for this shot.</p>
+          <div id="selch-content" class="selch-content">
+            <div id="selch-channel-wrap" class="selch-channel-wrap" hidden>
+              <label for="selch-channel-select" class="selch-channel-label">Preview column</label>
+              <select id="selch-channel-select" aria-label="Orca DAS preview column"></select>
+            </div>
+            <p id="selch-subtitle" class="selch-subtitle"></p>
+            <p class="selch-disclaimer">Band-pass trace is DAS support only — not whale probability.</p>
+            <div class="selch-canvases">
+              <div class="selch-block">
+                <span class="selch-label">Spectrogram (native-rate STFT, dB)</span>
+                <canvas id="selch-spec-canvas" width="1200" height="240" aria-label="Selected channel spectrogram"></canvas>
+              </div>
+              <div class="selch-block">
+                <span class="selch-label">Band-pass support score + threshold</span>
+                <canvas id="selch-band-canvas" width="1200" height="120" aria-label="Band-pass support score"></canvas>
+              </div>
+              <div class="selch-block">
+                <span class="selch-label">Waveform (median-centered)</span>
+                <canvas id="selch-wave-canvas" width="1200" height="100" aria-label="Selected channel waveform"></canvas>
+              </div>
+            </div>
+            <p id="selch-caption" class="panel-caption">Waiting for selected-channel bundle...</p>
+          </div>
+        </article>
+
       <aside class="panel panel-sidebar" aria-labelledby="meta-heading">
         <h2 id="meta-heading">Shot & Event Summary</h2>
         <dl class="meta-list">
@@ -156,6 +184,7 @@
 
   <div id="hover-tooltip" class="hover-tooltip" aria-hidden="true"></div>
 
+  <script src="vendor/fflate.min.js"></script>
   <script src="app.js"></script>
   </body>
 </html>

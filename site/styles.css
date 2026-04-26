@@ -229,10 +229,11 @@ button:disabled {
   display: grid;
   gap: 0.95rem;
   grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr);
-  grid-template-rows: auto auto;
+  grid-template-rows: auto auto auto;
   grid-template-areas:
     "das sidebar"
-    "hydro sidebar";
+    "hydro sidebar"
+    "selch sidebar";
 }
 
 .panel {
@@ -575,6 +576,107 @@ button:disabled {
   background: linear-gradient(180deg, rgba(11, 23, 43, 0.94), rgba(10, 18, 35, 0.92));
 }
 
+.panel-selected-channel {
+  grid-area: selch;
+  background: linear-gradient(180deg, rgba(11, 23, 43, 0.94), rgba(10, 18, 35, 0.92));
+  border-color: rgba(156, 255, 87, 0.22);
+  box-shadow: 0 0 0 1px rgba(156, 255, 87, 0.1), var(--shadow);
+}
+
+.panel-selected-channel h2 {
+  color: var(--ink);
+}
+
+.selch-unavailable {
+  margin: 0.65rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.selch-subtitle {
+  margin: 0.35rem 0 0.25rem;
+  color: var(--ink-dim);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.selch-disclaimer {
+  margin: 0 0 0.5rem;
+  color: var(--warning);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.selch-channel-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin: 0 0 0.45rem;
+}
+
+.selch-channel-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+#selch-channel-select {
+  min-width: 11rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid rgba(114, 246, 255, 0.28);
+  background: rgba(8, 15, 31, 0.85);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 0.88rem;
+}
+
+.selch-canvases {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.35rem;
+}
+
+.selch-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.selch-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
+#selch-spec-canvas,
+#selch-band-canvas,
+#selch-wave-canvas {
+  display: block;
+  width: 100%;
+  border-radius: 8px;
+  cursor: crosshair;
+  background: rgba(8, 15, 31, 0.55);
+}
+
+#selch-spec-canvas {
+  min-height: 200px;
+  height: 240px;
+}
+
+#selch-band-canvas {
+  min-height: 100px;
+  height: 120px;
+}
+
+#selch-wave-canvas {
+  min-height: 80px;
+  height: 100px;
+}
+
 .map-section {
   grid-column: 1 / -1;
   grid-template-columns: 1fr;
@@ -728,6 +830,7 @@ button:disabled {
     grid-template-areas:
       "das"
       "hydro"
+      "selch"
       "sidebar";
   }
 
