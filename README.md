@@ -15,7 +15,7 @@
 - **Baseline candidate events** from hydrophone spectrogram activity (MAD thresholding), with optional DAS hints — **no ML**.
 - **Sprint 2 backend:** Whales-subset DAS preprocessing prototype for cleaner DAS activity representations before rolling-RMS maps.
 
-Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_definition.md`, `docs/das_preprocessing_decision.md`.
+Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_definition.md`, `docs/das_preprocessing_decision.md`, `docs/das_hydrophone_alignment.md`.
 
 ## Repository layout
 
@@ -40,6 +40,8 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 | `src/extract_events_baseline.py` | Baseline `events.json` from `spectrogram.json` (+ optional `das_preview.json`) |
 | `src/preprocess_das.py` | Whales-only DAS preprocessing preview (`.npz` + metadata + raw/preprocessed comparison figures) |
 | `src/build_das_activity_map.py` | Build normalized rolling RMS DAS activity map (`das_activity_map.npz` + metadata + quick-look PNGs) |
+| `src/plot_das_hydrophone_alignment.py` | Validation figure: DAS coverage vs hydrophone score + candidate events |
+| `src/inspect_orca_channels.py` | Orca-only single-channel diagnostics vs activity map |
 
 ## Notes on data
 
@@ -100,9 +102,18 @@ The baseline detector also exports a compact support-score bundle:
 
 **DAS preprocessing preview (Sprint 2 backend, Whales shots):**
 
+By default, preprocessing uses the **full `DAS` time span in each HDF5** (`--duration-s 0`, `--max-samples 0`). Optional dev clip: `--duration-s 45 --max-samples 220000`. See `docs/das_hydrophone_alignment.md`.
+
 ```bash
 python src/preprocess_das.py --shot whales_humpback
 python src/preprocess_das.py --shot whales_orca
+```
+
+**DAS vs hydrophone alignment check (Orca writes `orca_alignment_check.png`):**
+
+```bash
+python src/plot_das_hydrophone_alignment.py --shot whales_orca
+python src/plot_das_hydrophone_alignment.py --shot whales_humpback
 ```
 
 **DAS activity representation (rolling RMS map from preprocessed DAS):**

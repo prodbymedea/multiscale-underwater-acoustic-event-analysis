@@ -66,6 +66,10 @@ Implemented chain in `src/preprocess_das.py`:
 
 This is intentionally simple, reproducible, and interpretable for a DAS-centered visualization pipeline.
 
+## Default time coverage
+
+`src/preprocess_das.py` selects **`[start_s, end of DAS dataset]`** in the shot HDF5 when `--duration-s <= 0`, with **no** extra `--max-samples` cap by default (`0` = disabled). This keeps DAS exports **time-aligned** with the full distributed recording segment and avoids silent truncation vs hydrophone exports. Optional clipping remains for fast experiments.
+
 ## Outputs produced
 
 For each shot (`whales_humpback`, `whales_orca`):

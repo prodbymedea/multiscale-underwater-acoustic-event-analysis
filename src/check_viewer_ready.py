@@ -66,6 +66,8 @@ def _all_required_for_group_exist(shot_dir: Path, group: str) -> tuple[bool, lis
 def _extract_summary_fields(shot_dir: Path) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "event_count": None,
+        "das_preview_time_range_s": None,
+        "candidate_events_fully_inside_das_preview": None,
         "das_activity_shape": None,
         "das_activity_time_range_s": None,
         "hydro_score_len": None,
@@ -75,13 +77,35 @@ def _extract_summary_fields(shot_dir: Path) -> dict[str, Any]:
     }
 
     events_p = shot_dir / "events.json"
+    events_list: list[dict[str, Any]] = []
     if events_p.is_file():
         try:
             with open(events_p, "r", encoding="utf-8") as f:
                 ev = json.load(f)
             summary["event_count"] = int(ev.get("n_events", len(ev.get("events", []))))
+            events_list = list(ev.get("events") or [])
         except Exception:
             summary["event_count"] = None
+
+    pre_npz = shot_dir / "das_preprocessed_preview.npz"
+    if pre_npz.is_file():
+        try:
+            z = np.load(pre_npz)
+            if "t_s" in z:
+                t = np.asarray(z["t_s"], dtype=np.float64)
+                if t.size:
+                    summary["das_preview_time_range_s"] = [float(t[0]), float(t[-1])]
+        except Exception:
+            pass
+
+    pr = summary.get("das_preview_time_range_s")
+    if isinstance(pr, list) and len(pr) == 2 and events_list:
+        p0, p1 = float(pr[0]), float(pr[1])
+        inside_flags = []
+        for e in events_list:
+            t0, t1 = float(e["start_time_s"]), float(e["end_time_s"])
+            inside_flags.append(t0 >= p0 - 1e-6 and t1 <= p1 + 1e-6)
+        summary["candidate_events_fully_inside_das_preview"] = bool(all(inside_flags))
 
     activity_p = shot_dir / "das_activity_map.npz"
     if activity_p.is_file():
@@ -191,6 +215,8 @@ def _print_details(rows: list[dict[str, Any]]) -> None:
         sm = r["summary"]
         print(f"\n[{r['shot_id']}]")
         print(f"  event_count: {sm.get('event_count')}")
+        print(f"  das_preview_time_range_s: {sm.get('das_preview_time_range_s')}")
+        print(f"  candidate_events_fully_inside_das_preview: {sm.get('candidate_events_fully_inside_das_preview')}")
         print(f"  das_activity_shape: {sm.get('das_activity_shape')}")
         print(f"  hydro_score_len: {sm.get('hydro_score_len')}")
         print(f"  das_activity_time_range_s: {sm.get('das_activity_time_range_s')}")

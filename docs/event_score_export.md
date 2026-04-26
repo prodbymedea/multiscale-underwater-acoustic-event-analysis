@@ -66,6 +66,8 @@ This prepares synchronized interpretation in the future viewer:
 - hydrophone score indicates **when** to inspect;
 - DAS activity map indicates **where/how** activity appears along the cable.
 
+For **how long** DAS and hydrophone both exist on a common timeline (and fixes for earlier Orca truncation), see **`docs/das_hydrophone_alignment.md`**.
+
 ## Relation to DAS-first MVP direction
 
 This export does not replace DAS as the main visual modality.

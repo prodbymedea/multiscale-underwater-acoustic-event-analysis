@@ -69,7 +69,7 @@ These describe shot-level properties, available sensors, and basic metadata.
 - `das_preprocessed_preview.npz`
 - `das_activity_map.npz`
 
-These provide compact visual-analysis-friendly representations of the raw data.
+These provide compact visual-analysis-friendly representations of the raw data. By default, the preprocessed DAS preview spans the **full `DAS` time span** in the shot HDF5 (optional clipping via `src/preprocess_das.py`); see `docs/das_hydrophone_alignment.md` for synchronization with hydrophone exports.
 
 ### Spatial output
 - `situation.json`

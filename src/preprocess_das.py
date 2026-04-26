@@ -20,7 +20,9 @@ Outputs (per shot):
 
 Usage:
   python3 src/preprocess_das.py --shot whales_humpback
-  python3 src/preprocess_das.py --shot whales_orca --duration-s 60 --channel-step 8
+  python3 src/preprocess_das.py --shot whales_orca
+  # Fast dev clip (not recommended for hydrophone / DAS alignment):
+  python3 src/preprocess_das.py --shot whales_orca --duration-s 45 --max-samples 220000
   python3 src/preprocess_das.py --shot whales_humpback --fmin 15 --fmax 1200
 """
 
@@ -213,8 +215,18 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--shot", required=True, choices=sorted(WHALES_SHOTS))
     ap.add_argument("--shot-path", type=Path, default=None, help="Optional explicit path to .h5 shot")
     ap.add_argument("--start-s", type=float, default=0.0)
-    ap.add_argument("--duration-s", type=float, default=45.0, help="0 or negative -> until file end")
-    ap.add_argument("--max-samples", type=int, default=220000, help="Safety cap for MVP runs")
+    ap.add_argument(
+        "--duration-s",
+        type=float,
+        default=0.0,
+        help="If > 0: load at most this many seconds from start-s. If <= 0: use full DAS trace in HDF5 (to end of dataset).",
+    )
+    ap.add_argument(
+        "--max-samples",
+        type=int,
+        default=0,
+        help="If > 0: hard cap on number of time samples after interval selection (legacy dev safety). 0 = no extra cap.",
+    )
     ap.add_argument("--channel-step", type=int, default=5)
     ap.add_argument("--max-channels", type=int, default=200)
     ap.add_argument("--preview-downsample", type=int, default=10)
@@ -254,7 +266,7 @@ def main() -> None:
         spatial_res = float(attrs.get("SpatialResolution", 1.0))
 
         start_idx = max(0, int(round(args.start_s * fs_hz)))
-        if args.duration_s and args.duration_s > 0:
+        if args.duration_s > 0:
             end_idx = min(n_samples, start_idx + int(round(args.duration_s * fs_hz)))
         else:
             end_idx = n_samples
