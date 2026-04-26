@@ -53,6 +53,9 @@ The same selected interval (`start` / `end`) now drives all three panels:
 	- click inside hydrophone view to move shared cursor,
 	- click or drag inside selected-channel canvases to move the shared cursor,
 	- lightweight drag-to-seek is supported in DAS and hydro views.
+- Map-assisted selected-channel switching:
+	- for multi-channel selected-channel shots, click near the fiber on the map to snap to the nearest available exported selected channel,
+	- this reuses the same selected-channel state as the dropdown selector and updates the dropdown value.
 - Interactive feedback:
 	- current interval and cursor time are always visible,
 	- active event updates as cursor moves,

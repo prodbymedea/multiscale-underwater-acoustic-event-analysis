@@ -39,6 +39,7 @@ const state = {
   hoverEvent: null,
   hoverTarget: null,
   draggingTarget: null,
+  mapPointerDown: null,
   mapViewport: {
     zoom: 1,
     targetZoom: 1,
@@ -1547,6 +1548,25 @@ function renderMapPanel() {
   const showFiber = getMapLayerEnabled("fiber");
   const showTracks = getMapLayerEnabled("tracks");
   const showPoints = getMapLayerEnabled("points");
+  const fiberSelectionPoints = Array.isArray(fiberAll)
+    ? fiberAll.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)).map((pt) => ({ x: Number(pt.x), y: Number(pt.y) }))
+    : [];
+  let fiberSelection = null;
+  if (fiberSelectionPoints.length > 1) {
+    const cumLen = [0];
+    let totalLen = 0;
+    for (let i = 1; i < fiberSelectionPoints.length; i += 1) {
+      const a = fiberSelectionPoints[i - 1];
+      const b = fiberSelectionPoints[i];
+      totalLen += Math.hypot(b.x - a.x, b.y - a.y);
+      cumLen.push(totalLen);
+    }
+    fiberSelection = {
+      points: fiberSelectionPoints,
+      cumLen,
+      totalLen
+    };
+  }
 
   const bathyColor = (depth, minDepth, maxDepth) => {
     if (!Number.isFinite(depth)) {
@@ -1657,6 +1677,23 @@ function renderMapPanel() {
     }
   }
 
+  const sc = state.shotBundle?.selectedChannel;
+  if (fiberSelection && sc?.available && sc.multiChannel && Number.isFinite(sc.activePreviewCol)) {
+    const entry = sc.entryByCol?.[String(sc.activePreviewCol)];
+    const stats = getSelectedChannelsDistanceStats(sc);
+    const activeDistance = Number(entry?.distance_m);
+    if (entry && stats && Number.isFinite(activeDistance) && stats.max > stats.min + 1e-9) {
+      const frac = clamp((activeDistance - stats.min) / (stats.max - stats.min), 0, 1);
+      const markerPt = pointOnFiberAtFraction(fiberSelection, frac);
+      if (markerPt) {
+        const mx = xScale(markerPt.x);
+        const my = yScale(markerPt.y);
+        const body = `Type: Selected-channel marker<br>Preview col: ${entry.preview_col}<br>Raw channel: ${entry.raw_das_channel_index}<br>Distance: ${activeDistance.toFixed(1)} m`;
+        parts.push(`<circle class="map-interactive-point map-point-selected-channel" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="6.8" fill="#72f6ff" stroke="rgba(226,236,255,0.95)" stroke-width="1.6" data-tooltip-title="Selected DAS channel" data-tooltip-body="${body}"></circle>`);
+      }
+    }
+  }
+
   if (showTracks) {
     trackItems.forEach((track, idx) => {
       const color = TRACK_PALETTE[idx % TRACK_PALETTE.length];
@@ -1711,7 +1748,8 @@ function renderMapPanel() {
     viewMinX,
     viewMaxX,
     viewMinY,
-    viewMaxY
+    viewMaxY,
+    fiberSelection
   };
 
   el.mapSvg.innerHTML = parts.join("");
@@ -1875,6 +1913,155 @@ function onMapDoubleClick(event) {
   zoomMapAtClientPoint(event.clientX, event.clientY, event.shiftKey ? (1 / 1.55) : 1.55);
 }
 
+function mapClientToWorld(clientX, clientY) {
+  if (!el.mapSvg || !state.geometry.map) {
+    return null;
+  }
+  const geo = state.geometry.map;
+  const rect = el.mapSvg.getBoundingClientRect();
+  const sx = clamp((clientX - rect.left - geo.pad.l) / Math.max(1, geo.plotW), 0, 1);
+  const sy = clamp((clientY - rect.top - geo.pad.t) / Math.max(1, geo.plotH), 0, 1);
+  return {
+    x: geo.viewMinX + sx * Math.max(1e-9, geo.viewMaxX - geo.viewMinX),
+    y: geo.viewMaxY - sy * Math.max(1e-9, geo.viewMaxY - geo.viewMinY)
+  };
+}
+
+function worldToMapScreenPx(worldX, worldY, geo) {
+  return {
+    x: geo.pad.l + ((worldX - geo.viewMinX) / Math.max(1e-9, geo.viewMaxX - geo.viewMinX)) * geo.plotW,
+    y: geo.pad.t + (1 - (worldY - geo.viewMinY) / Math.max(1e-9, geo.viewMaxY - geo.viewMinY)) * geo.plotH
+  };
+}
+
+function nearestFiberProjection(worldX, worldY, fiber) {
+  if (!fiber || !Array.isArray(fiber.points) || fiber.points.length < 2 || !Array.isArray(fiber.cumLen)) {
+    return null;
+  }
+  const pts = fiber.points;
+  const cum = fiber.cumLen;
+  const total = Math.max(1e-9, fiber.totalLen || cum[cum.length - 1] || 1);
+  let best = null;
+  let bestD2 = Infinity;
+  for (let i = 1; i < pts.length; i += 1) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const vx = b.x - a.x;
+    const vy = b.y - a.y;
+    const seg2 = vx * vx + vy * vy;
+    if (seg2 < 1e-12) {
+      continue;
+    }
+    const wx = worldX - a.x;
+    const wy = worldY - a.y;
+    const u = clamp((wx * vx + wy * vy) / seg2, 0, 1);
+    const px = a.x + u * vx;
+    const py = a.y + u * vy;
+    const dx = worldX - px;
+    const dy = worldY - py;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestD2) {
+      bestD2 = d2;
+      const segLen = Math.sqrt(seg2);
+      const along = cum[i - 1] + u * segLen;
+      best = {
+        x: px,
+        y: py,
+        along,
+        fraction: clamp(along / total, 0, 1)
+      };
+    }
+  }
+  return best;
+}
+
+function pointOnFiberAtFraction(fiber, fraction) {
+  if (!fiber || !Array.isArray(fiber.points) || fiber.points.length < 2 || !Array.isArray(fiber.cumLen)) {
+    return null;
+  }
+  const pts = fiber.points;
+  const cum = fiber.cumLen;
+  const total = Math.max(1e-9, fiber.totalLen || cum[cum.length - 1] || 1);
+  const target = clamp(fraction, 0, 1) * total;
+  for (let i = 1; i < cum.length; i += 1) {
+    if (target <= cum[i]) {
+      const segLen = Math.max(1e-9, cum[i] - cum[i - 1]);
+      const u = clamp((target - cum[i - 1]) / segLen, 0, 1);
+      const a = pts[i - 1];
+      const b = pts[i];
+      return {
+        x: a.x + u * (b.x - a.x),
+        y: a.y + u * (b.y - a.y)
+      };
+    }
+  }
+  return pts[pts.length - 1];
+}
+
+function getSelectedChannelsDistanceStats(sc) {
+  const entries = Object.values(sc?.entryByCol || {}).filter((e) => Number.isFinite(Number(e?.distance_m)));
+  if (!entries.length) {
+    return null;
+  }
+  const ds = entries.map((e) => Number(e.distance_m)).sort((a, b) => a - b);
+  return {
+    min: ds[0],
+    max: ds[ds.length - 1]
+  };
+}
+
+function tryMapClickSelectChannel(clientX, clientY) {
+  const sc = state.shotBundle?.selectedChannel;
+  if (!sc?.available || !sc.multiChannel) {
+    return;
+  }
+  const geo = state.geometry.map;
+  const fiber = geo?.fiberSelection;
+  if (!geo || !fiber) {
+    return;
+  }
+  const world = mapClientToWorld(clientX, clientY);
+  if (!world) {
+    return;
+  }
+  const nearest = nearestFiberProjection(world.x, world.y, fiber);
+  if (!nearest) {
+    return;
+  }
+  const nearestPx = worldToMapScreenPx(nearest.x, nearest.y, geo);
+  const rect = el.mapSvg.getBoundingClientRect();
+  const localX = clientX - rect.left;
+  const localY = clientY - rect.top;
+  const distPx = Math.hypot(localX - nearestPx.x, localY - nearestPx.y);
+  if (distPx > 26) {
+    return;
+  }
+
+  const stats = getSelectedChannelsDistanceStats(sc);
+  const entries = Object.values(sc.entryByCol || {});
+  if (!stats || !entries.length) {
+    return;
+  }
+  const targetDist = stats.min + nearest.fraction * (stats.max - stats.min);
+  let best = null;
+  let bestDelta = Infinity;
+  for (const entry of entries) {
+    const d = Number(entry?.distance_m);
+    if (!Number.isFinite(d)) {
+      continue;
+    }
+    const delta = Math.abs(d - targetDist);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = entry;
+    }
+  }
+  if (!best || !Number.isFinite(best.preview_col)) {
+    return;
+  }
+  void switchSelectedChannelToPreviewCol(Number(best.preview_col));
+}
+
 function onMapPointerDown(event) {
   if (!state.shotBundle) {
     return;
@@ -1883,6 +2070,7 @@ function onMapPointerDown(event) {
     return;
   }
   state.draggingTarget = "map";
+  state.mapPointerDown = { x: event.clientX, y: event.clientY, moved: false };
   state.hover.map = { x: event.clientX, y: event.clientY };
   el.mapSvg.style.cursor = "grabbing";
 }
@@ -1899,6 +2087,13 @@ function onMapPointerMove(event) {
   const dx = event.clientX - state.hover.map.x;
   const dy = event.clientY - state.hover.map.y;
   state.hover.map = { x: event.clientX, y: event.clientY };
+  if (state.mapPointerDown && !state.mapPointerDown.moved) {
+    const ddx = event.clientX - state.mapPointerDown.x;
+    const ddy = event.clientY - state.mapPointerDown.y;
+    if (Math.hypot(ddx, ddy) > 4) {
+      state.mapPointerDown.moved = true;
+    }
+  }
 
   state.mapViewport.offsetX = clamp(state.mapViewport.offsetX - (dx / Math.max(1, geo.plotW)) / state.mapViewport.zoom, -0.5, 0.5);
   state.mapViewport.offsetY = clamp(state.mapViewport.offsetY + (dy / Math.max(1, geo.plotH)) / state.mapViewport.zoom, -0.5, 0.5);
@@ -2540,8 +2735,12 @@ function bindSelchCanvas(canvas) {
   );
 }
 
-function onGlobalPointerUp() {
+function onGlobalPointerUp(event) {
+  if (state.draggingTarget === "map" && state.mapPointerDown && !state.mapPointerDown.moved && event && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+    tryMapClickSelectChannel(event.clientX, event.clientY);
+  }
   state.draggingTarget = null;
+  state.mapPointerDown = null;
   if (el.mapSvg) {
     el.mapSvg.style.cursor = "grab";
   }

@@ -329,6 +329,10 @@ button:disabled {
   filter: drop-shadow(0 0 5px rgba(226, 236, 255, 0.5));
 }
 
+#map-svg .map-point-selected-channel {
+  filter: drop-shadow(0 0 6px rgba(114, 246, 255, 0.72));
+}
+
 
 @keyframes boat-point-pulse {
   0% {
