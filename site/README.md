@@ -25,10 +25,10 @@ The same selected interval (`start` / `end`) now drives all three panels:
 	- renders source/recorder positions from `shot_metadata.json`, `recorders_summary.json`, and manifest source ground truth,
 	- displays synchronized interval context,
 	- falls back to metadata-only mode when spatial coordinates are unavailable.
-- Selected-channel DAS panel (Orca Stage 2 demo):
+- Selected-channel DAS panel:
 	- loads `selected_channels_index.json` when present (multiple preview columns), otherwise the legacy single triple `selected_channel_*.npz`,
-	- shows spectrogram, band-pass **support** score (with threshold and optional mask), and waveform; **Preview column** dropdown switches among exported Orca channels (default 189, 12, 50),
-	- hidden with a short message when the shot has no bundle (e.g. `whales_humpback` today).
+	- shows spectrogram, band-pass **support** score (with threshold and optional mask), and waveform; **Preview column** dropdown appears for multi-channel shots (Orca default 189, 12, 50),
+	- for single-channel shots, it loads the default selected channel without showing a selector.
 
 ## Synchronization behavior
 
@@ -81,8 +81,8 @@ Fallback mode keeps synchronized interval/events but uses metadata-driven placeh
 
 ## Known simplifications
 
-- Selected-channel `.npz` parsing supports the dtypes used in the Orca export (`float32` time series, `uint8` mask, etc.); exotic dtypes may require extending `parseNpyArrayBuffer`.
-- DAS activity and hydro **main** panels still depend on JSON viewer exports (`viewer/das_activity.json`, `hydrophone_activity.json`).
+- Selected-channel `.npz` parsing supports the dtypes used in current exports (`float32` time series, `uint8` mask, etc.); exotic dtypes may require extending `parseNpyArrayBuffer`.
+- DAS activity and hydro **main** panels can use JSON compatibility exports when present, with NPZ fallback (`das_activity_map.npz`, `hydrophone_event_score.npz`) when JSON is absent.
 - Map panel currently renders lightweight source/recorder context, not full bathymetry/fiber-track geometry rendering.
 
 ## Local testing

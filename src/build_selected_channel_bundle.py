@@ -35,13 +35,18 @@ from _repo_paths import REPO_ROOT, resolve_shot_h5
 
 ORCA_SUBDIR = "2022-01-26--04--Whales"
 ORCA_FILE = "2022-01-26--04-47-42--Orca.h5"
+HUMPBACK_SUBDIR = "2022-01-26--04--Whales"
+HUMPBACK_FILE = "2022-01-26--04-46-16--Humpback.h5"
 
 SHOT_SPECS: dict[str, tuple[str, str]] = {
     "whales_orca": (ORCA_SUBDIR, ORCA_FILE),
+    "whales_humpback": (HUMPBACK_SUBDIR, HUMPBACK_FILE),
 }
 
 # Stage 2 Orca: small fixed set of recommended preview columns (native preview grid indices).
 ORCA_STAGE2_PREVIEW_COLS: list[int] = [189, 12, 50]
+HUMPBACK_STAGE2_MAX_CHANNELS = 3
+HUMPBACK_STAGE2_MIN_COL_GAP = 20
 
 
 def _mad_threshold(x: np.ndarray, k: float) -> float:
@@ -85,6 +90,96 @@ def _load_defaults_from_summaries(shot_dir: Path) -> tuple[int, float, float]:
         col = int(doc.get("recommended_default_preview_column", 189))
         return col, 2000.0, 2350.0
     return 189, 2000.0, 2350.0
+
+
+def _choose_humpback_default_preview_col(shot_dir: Path) -> int:
+    """
+    Choose one practical Humpback default preview column from event-overlap DAS activity.
+    Score = mean(activity during event windows) - mean(activity outside event windows).
+    """
+    events_p = shot_dir / "events.json"
+    act_p = shot_dir / "das_activity_map.npz"
+    if not events_p.is_file() or not act_p.is_file():
+        return 118
+
+
+def _rank_humpback_preview_cols(shot_dir: Path) -> list[int]:
+    """
+    Return a ranked small set of Humpback preview columns using event-aware DAS activity.
+    Priority score combines event contrast and in-event absolute activity:
+      score = (mean_in - mean_out) + 0.35 * mean_in
+    Then enforce diversity with a minimum preview-column gap.
+    """
+    events_p = shot_dir / "events.json"
+    act_p = shot_dir / "das_activity_map.npz"
+    if not events_p.is_file() or not act_p.is_file():
+        return [118]
+    try:
+        with open(events_p, encoding="utf-8") as f:
+            events_doc = json.load(f)
+        events = events_doc.get("events", [])
+        z = np.load(act_p)
+        a = np.asarray(z["activity_map"], dtype=np.float64)  # [time, channel]
+        t = np.asarray(z["t_windows_s"], dtype=np.float64)
+        if a.ndim != 2 or t.ndim != 1 or a.shape[0] != t.shape[0]:
+            return [118]
+        mask = np.zeros_like(t, dtype=bool)
+        for ev in events:
+            t0 = float(ev.get("start_time_s"))
+            t1 = float(ev.get("end_time_s"))
+            if np.isfinite(t0) and np.isfinite(t1) and t1 >= t0:
+                mask |= (t >= t0) & (t <= t1)
+        if not np.any(mask) or np.all(mask):
+            return [118]
+
+        mean_in = a[mask].mean(axis=0)
+        mean_out = a[~mask].mean(axis=0)
+        contrast = mean_in - mean_out
+        combined = contrast + 0.35 * mean_in
+        order = np.argsort(combined)[::-1]
+
+        selected: list[int] = []
+        for i in order:
+            col = int(i)
+            if all(abs(col - s) >= HUMPBACK_STAGE2_MIN_COL_GAP for s in selected):
+                selected.append(col)
+            if len(selected) >= HUMPBACK_STAGE2_MAX_CHANNELS:
+                break
+
+        if not selected:
+            return [118]
+        # Keep previous default (118) if still competitive and selected.
+        if 118 in selected:
+            selected = [118] + [c for c in selected if c != 118]
+        return selected
+    except Exception:
+        return [118]
+    try:
+        with open(events_p, encoding="utf-8") as f:
+            events_doc = json.load(f)
+        events = events_doc.get("events", [])
+        z = np.load(act_p)
+        a = np.asarray(z["activity_map"], dtype=np.float64)  # [time, channel]
+        t = np.asarray(z["t_windows_s"], dtype=np.float64)
+        if a.ndim != 2 or t.ndim != 1 or a.shape[0] != t.shape[0]:
+            return 118
+        mask = np.zeros_like(t, dtype=bool)
+        for ev in events:
+            t0 = float(ev.get("start_time_s"))
+            t1 = float(ev.get("end_time_s"))
+            if np.isfinite(t0) and np.isfinite(t1) and t1 >= t0:
+                mask |= (t >= t0) & (t <= t1)
+        if not np.any(mask) or np.all(mask):
+            return 118
+        mean_in = a[mask].mean(axis=0)
+        mean_out = a[~mask].mean(axis=0)
+        score = mean_in - mean_out
+        best = int(np.argmax(score))
+        if 0 <= best < a.shape[1]:
+            return best
+        return 118
+    except Exception:
+        return 118
 
 
 def _shot_rel(shot_dir: Path, path: Path) -> str:
@@ -136,7 +231,7 @@ def _patch_viewer_manifest(
         "recommended_band_hz": band,
         "bundle_metadata_file": _shot_rel(shot_dir, shot_dir / bundle_name),
         "notes": (
-            "Orca selected-channel native-rate NPZ exports (Stage 2: multiple preview columns). "
+            "Selected-channel native-rate NPZ export(s) for this shot. "
             "Band-pass score is DAS support only, not whale probability. "
             "Does not replace the DAS activity map."
         ),
@@ -148,6 +243,7 @@ def _patch_viewer_manifest(
         if index_name:
             demo["index_file"] = index_name
     manifest["selected_channel_demo"] = demo
+    manifest["selected_channel_mode_available"] = True
 
     notes = manifest.setdefault("notes", [])
     tag = "selected_channel_demo: compact NPZ bundle avoids HDF5 at frontend load time."
@@ -273,6 +369,7 @@ def _export_preview_column_npzs(
             }
 
     t0, t1 = float(t_native[0]), float(t_native[-1])
+    shot_label = "Orca" if shot_id == "whales_orca" else "Humpback"
     bundle: dict[str, Any] = {
         "schema_version": "selected_channel_bundle_v1",
         "shot_id": shot_id,
@@ -280,7 +377,7 @@ def _export_preview_column_npzs(
         "selected_raw_channel": raw_ch,
         "selected_distance_m": dist_m,
         "selected_channel_label": (
-            f"Orca DAS raw ch {raw_ch} (preview col {preview_col}, ~{dist_m:.1f} m along cable)"
+            f"{shot_label} DAS raw ch {raw_ch} (preview col {preview_col}, ~{dist_m:.1f} m along cable)"
         ),
         "time_range_s": [t0, t1],
         "sampling_rate_hz": fs_hz,
@@ -303,7 +400,7 @@ def _export_preview_column_npzs(
             "noverlap": noverlap,
             "window": "hann",
             "Sxx_scale": "PSD dB (10*log10)",
-            "notes": "Covers full Nyquist; Orca-focused band 2000–2350 Hz is within this grid.",
+            "notes": "Covers full Nyquist; the recommended support band for this shot is within this grid.",
         },
         "bandpass_support_export": {
             "file": _shot_rel(shot_dir, bp_path),
@@ -330,7 +427,7 @@ def _export_preview_column_npzs(
             "shot_dir": _repo_rel(shot_dir),
         },
         "notes": [
-            "Per-preview-column NPZ bundle for Orca selected-channel viewer (no HDF5 in browser).",
+            "Per-preview-column NPZ bundle for selected-channel viewer (no HDF5 in browser).",
             "DAS activity map and hydrophone pipeline outputs remain the primary synchronized layers.",
             "Band-pass score is optional DAS-side support for selected-channel view only.",
         ],
@@ -340,7 +437,7 @@ def _export_preview_column_npzs(
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Build selected-channel NPZ bundle for viewer demo")
-    ap.add_argument("--shot", default="whales_orca", choices=("whales_orca",))
+    ap.add_argument("--shot", default="whales_orca", choices=("whales_orca", "whales_humpback"))
     ap.add_argument("--shot-dir", type=Path, default=None)
     ap.add_argument(
         "--preview-col",
@@ -352,7 +449,10 @@ def parse_args() -> argparse.Namespace:
         "--preview-cols",
         type=str,
         default="",
-        help=f"Comma-separated preview columns (default: {'/'.join(str(c) for c in ORCA_STAGE2_PREVIEW_COLS)} when --preview-col is -1)",
+        help=(
+            "Comma-separated preview columns. "
+            "Default when unset: Orca=189,12,50; Humpback=ranked event-aware top set."
+        ),
     )
     ap.add_argument("--band", type=str, default="", help="f_lo-f_hi Hz, e.g. 2000-2350")
     ap.add_argument("--mad-k", type=float, default=3.0)
@@ -377,20 +477,45 @@ def main() -> None:
     shot_dir = (args.shot_dir or (REPO_ROOT / "output" / "shots" / shot_id)).resolve()
     shot_dir.mkdir(parents=True, exist_ok=True)
 
-    _, def_lo, def_hi = _load_defaults_from_summaries(shot_dir)
-    if args.band.strip():
-        f_lo, f_hi = _parse_band(args.band.strip())
+    def_col, def_lo, def_hi = _load_defaults_from_summaries(shot_dir)
+    if shot_id == "whales_humpback":
+        pre_meta_band_lo, pre_meta_band_hi = 15.0, 1200.0
+        pre_meta_p_probe = shot_dir / "das_preprocessing_metadata.json"
+        if pre_meta_p_probe.is_file():
+            try:
+                with open(pre_meta_p_probe, encoding="utf-8") as f:
+                    pre_meta_probe = json.load(f)
+                filt = pre_meta_probe.get("filter", {}) or {}
+                if np.isfinite(float(filt.get("fmin_hz", pre_meta_band_lo))):
+                    pre_meta_band_lo = float(filt.get("fmin_hz", pre_meta_band_lo))
+                if np.isfinite(float(filt.get("fmax_hz", pre_meta_band_hi))):
+                    pre_meta_band_hi = float(filt.get("fmax_hz", pre_meta_band_hi))
+            except Exception:
+                pass
+        if args.band.strip():
+            f_lo, f_hi = _parse_band(args.band.strip())
+        else:
+            f_lo, f_hi = pre_meta_band_lo, pre_meta_band_hi
+        if int(args.preview_col) >= 0:
+            preview_cols = [int(args.preview_col)]
+        elif args.preview_cols.strip():
+            preview_cols = [int(x.strip()) for x in args.preview_cols.split(",") if x.strip()]
+        else:
+            preview_cols = _rank_humpback_preview_cols(shot_dir)
+        # Stage-1 continuity: keep 118 as default when present.
+        default_preview_col = 118 if 118 in preview_cols else int(preview_cols[0])
     else:
-        f_lo, f_hi = def_lo, def_hi
-
-    if int(args.preview_col) >= 0:
-        preview_cols = [int(args.preview_col)]
-    elif args.preview_cols.strip():
-        preview_cols = [int(x.strip()) for x in args.preview_cols.split(",") if x.strip()]
-    else:
-        preview_cols = list(ORCA_STAGE2_PREVIEW_COLS)
-
-    default_preview_col = 189 if 189 in preview_cols else int(preview_cols[0])
+        if args.band.strip():
+            f_lo, f_hi = _parse_band(args.band.strip())
+        else:
+            f_lo, f_hi = def_lo, def_hi
+        if int(args.preview_col) >= 0:
+            preview_cols = [int(args.preview_col)]
+        elif args.preview_cols.strip():
+            preview_cols = [int(x.strip()) for x in args.preview_cols.split(",") if x.strip()]
+        else:
+            preview_cols = list(ORCA_STAGE2_PREVIEW_COLS)
+        default_preview_col = 189 if 189 in preview_cols else int(preview_cols[0])
 
     pre_meta_p = shot_dir / "das_preprocessing_metadata.json"
     pre_npz_p = shot_dir / "das_preprocessed_preview.npz"
@@ -484,20 +609,22 @@ def main() -> None:
     with open(bundle_path, "w", encoding="utf-8") as f:
         json.dump(bundle_for_default, f, indent=2, ensure_ascii=False)
 
-    index_doc: dict[str, Any] = {
-        "schema_version": "selected_channels_index_v1",
-        "shot_id": shot_id,
-        "default_preview_col": default_preview_col,
-        "recommended_bandpass_hz": [f_lo, f_hi],
-        "channels": index_channels,
-        "notes": [
-            "Maps preview_column to per-channel NPZ triples for Orca Stage-2 viewer.",
-            "Legacy filenames selected_channel_*.npz duplicate the default_preview_col exports.",
-        ],
-    }
-    index_path = shot_dir / "selected_channels_index.json"
-    with open(index_path, "w", encoding="utf-8") as f:
-        json.dump(index_doc, f, indent=2, ensure_ascii=False)
+    index_path: Path | None = None
+    if len(preview_cols) > 1:
+        index_doc: dict[str, Any] = {
+            "schema_version": "selected_channels_index_v1",
+            "shot_id": shot_id,
+            "default_preview_col": default_preview_col,
+            "recommended_bandpass_hz": [f_lo, f_hi],
+            "channels": index_channels,
+            "notes": [
+                "Maps preview_column to per-channel NPZ triples for selected-channel Stage-2 viewer.",
+                "Legacy filenames selected_channel_*.npz duplicate the default_preview_col exports.",
+            ],
+        }
+        index_path = shot_dir / "selected_channels_index.json"
+        with open(index_path, "w", encoding="utf-8") as f:
+            json.dump(index_doc, f, indent=2, ensure_ascii=False)
 
     if not args.no_patch_manifest:
         _patch_viewer_manifest(
@@ -507,18 +634,19 @@ def main() -> None:
             preview_col=default_preview_col,
             raw_ch=raw_ch_default,
             band=[f_lo, f_hi],
-            index_name=index_path.name,
+            index_name=index_path.name if index_path else None,
             available_preview_cols=list(preview_cols),
         )
 
     print(f"Exported preview columns: {preview_cols} (default={default_preview_col}) band={f_lo}-{f_hi} Hz")
-    print(f"Saved {index_path.name} ({len(index_channels)} channels)")
+    if index_path is not None:
+        print(f"Saved {index_path.name} ({len(index_channels)} channels)")
     print(f"Saved {bundle_path.name}")
     print(f"Legacy selected_channel_*.npz aligned to preview_col={default_preview_col}")
     if last_sxx_shape:
         print(f"Last spectrogram Sxx_db shape {last_sxx_shape}, ~{last_n} samples @ {last_fs} Hz")
     if not args.no_patch_manifest:
-        print("Patched viewer_manifest.json (Stage 2 selected-channel index + demo)")
+        print("Patched viewer_manifest.json (selected-channel demo + file references)")
 
 
 if __name__ == "__main__":
