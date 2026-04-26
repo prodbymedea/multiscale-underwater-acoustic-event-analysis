@@ -84,6 +84,15 @@ This contains map-ready spatial context derived from `Situation.h5`.
 
 This contains baseline candidate event intervals and associated fields such as timing, score, and support information.
 
+### Selected-channel demo (Orca, Stage 1)
+
+- `selected_channel_bundle.json` — index/metadata for one default DAS channel (no HDF5 in viewer)
+- `selected_channel_signal.npz` — native-rate median-centered waveform
+- `selected_channel_spectrogram.npz` — STFT PSD in dB (`Sxx_db`)
+- `selected_channel_bandpass_score.npz` — optional high-band DAS support score (not whale probability)
+
+Built by `src/build_selected_channel_bundle.py`; `viewer_manifest.json` may include a `selected_channel_demo` block with paths.
+
 ## Planned viewer inputs
 
 For the next MVP stage, the viewer is expected to consume a more explicit set of visualization-oriented inputs.

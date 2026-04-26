@@ -15,7 +15,7 @@
 - **Baseline candidate events** from hydrophone spectrogram activity (MAD thresholding), with optional DAS hints — **no ML**.
 - **Sprint 2 backend:** Whales-subset DAS preprocessing prototype for cleaner DAS activity representations before rolling-RMS maps.
 
-Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_definition.md`, `docs/das_preprocessing_decision.md`, `docs/das_hydrophone_alignment.md`.
+Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_definition.md`, `docs/das_preprocessing_decision.md`, `docs/das_hydrophone_alignment.md`, `docs/orca_bandpass_baseline.md`.
 
 ## Repository layout
 
@@ -42,6 +42,8 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 | `src/build_das_activity_map.py` | Build normalized rolling RMS DAS activity map (`das_activity_map.npz` + metadata + quick-look PNGs) |
 | `src/plot_das_hydrophone_alignment.py` | Validation figure: DAS coverage vs hydrophone score + candidate events |
 | `src/inspect_orca_channels.py` | Orca-only single-channel diagnostics vs activity map |
+| `src/test_orca_bandpass_baseline.py` | Orca native-rate DAS band-pass envelope baseline (diagnostic figures + `orca_bandpass_summary.json`) |
+| `src/build_selected_channel_bundle.py` | Stage 1: compact single-channel NPZ bundle + `selected_channel_bundle.json` for frontend (no HDF5) |
 
 ## Notes on data
 
@@ -115,6 +117,23 @@ python src/preprocess_das.py --shot whales_orca
 python src/plot_das_hydrophone_alignment.py --shot whales_orca
 python src/plot_das_hydrophone_alignment.py --shot whales_humpback
 ```
+
+**Orca high-band DAS baseline (native-rate HDF5; not whale probability):**
+
+```bash
+python src/test_orca_bandpass_baseline.py
+```
+
+See `docs/orca_bandpass_baseline.md` for Nyquist limits vs preview-rate NPZ.
+
+**Selected-channel demo bundle (Orca, default preview col 189 / raw ch 945):**
+
+```bash
+python src/build_selected_channel_bundle.py --shot whales_orca
+python src/build_selected_channel_bundle.py --shot whales_orca --preview-col 189 --band 2000-2350
+```
+
+Writes `output/shots/whales_orca/selected_channel_*.npz` and patches `viewer_manifest.json` with `selected_channel_demo` (use `--no-patch-manifest` to skip).
 
 **DAS activity representation (rolling RMS map from preprocessed DAS):**
 
