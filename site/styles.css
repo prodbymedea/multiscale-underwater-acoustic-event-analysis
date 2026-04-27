@@ -286,10 +286,23 @@ button:disabled {
 }
 
 #map-svg {
+  position: relative;
+  z-index: 1;
   min-height: 400px;
   height: 560px;
   cursor: grab;
   touch-action: none;
+  overflow: hidden;
+}
+
+#map-view {
+  position: relative;
+}
+
+.map-canvas-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
 }
 
 #map-svg [data-tooltip-title] {
@@ -482,6 +495,51 @@ button:disabled {
   color: var(--muted);
   font-size: 0.79rem;
   line-height: 1.42;
+}
+
+.map-zoom-controls {
+  position: absolute;
+  right: calc(100% - var(--map-legend-right, 100%) + 7.8rem);
+  bottom: 1.2rem;
+  z-index: 5;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.08rem;
+  margin: 0;
+}
+
+.map-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.55rem;
+  min-width: 1.55rem;
+  height: 1.55rem;
+  border: 0;
+  background: transparent;
+  color: rgba(223, 241, 255, 0.94);
+  font-size: 1.58rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  text-shadow: 0 0 8px rgba(114, 246, 255, 0.42);
+  transition: color 140ms ease, transform 120ms ease, text-shadow 140ms ease;
+}
+
+.map-zoom-btn:hover {
+  color: #72f6ff;
+  text-shadow: 0 0 10px rgba(114, 246, 255, 0.66);
+}
+
+.map-zoom-btn:active {
+  transform: scale(0.92);
+}
+
+.map-zoom-btn:focus-visible {
+  outline: 1px dashed rgba(114, 246, 255, 0.7);
+  outline-offset: 3px;
 }
 
 .panel-caption {
@@ -870,4 +928,3 @@ button:disabled {
     flex-wrap: wrap;
   }
 }
-

@@ -49,6 +49,11 @@ const state = {
   mainRenderFrame: 0,
   mapRenderFrame: 0,
   mapZoomFrame: 0,
+  mapZoomActive: false,
+  mapPanFrame: 0,
+  mapPanDX: 0,
+  mapPanDY: 0,
+  mapPanLastRenderTs: 0,
   mapTimelinePlayFrame: 0,
   mapTimelineLastTickMs: 0,
   lastStatusMessage: null
@@ -84,6 +89,8 @@ const el = {
   mapTimeSlider: document.getElementById("map-time-slider"),
   mapTimeValue: document.getElementById("map-time-value"),
   mapTimeNote: document.getElementById("map-time-note"),
+  mapZoomIn: document.getElementById("map-zoom-in"),
+  mapZoomOut: document.getElementById("map-zoom-out"),
   mapView: document.getElementById("map-view"),
   eventNav: document.getElementById("event-nav"),
   hoverTooltip: document.getElementById("hover-tooltip"),
@@ -123,6 +130,11 @@ function clamp(value, min, max) {
 }
 
 function resetMapViewport() {
+  if (state.mapZoomFrame) {
+    cancelAnimationFrame(state.mapZoomFrame);
+    state.mapZoomFrame = 0;
+  }
+  state.mapZoomActive = false;
   state.mapViewport.zoom = 1;
   state.mapViewport.targetZoom = 1;
   state.mapViewport.offsetX = 0;
@@ -155,17 +167,22 @@ function scheduleMainRender() {
 
 function animateMapZoom() {
   if (state.mapZoomFrame) {
+    state.mapZoomActive = true;
     return;
   }
 
+  state.mapZoomActive = true;
+  let frameCount = 0;
   const tick = () => {
     state.mapZoomFrame = 0;
     const current = state.mapViewport.zoom;
     const target = state.mapViewport.targetZoom;
-    const next = current + (target - current) * 0.16;
+    const next = current + (target - current) * 0.62;
+    frameCount += 1;
 
-    if (Math.abs(next - target) < 0.0018) {
+    if (Math.abs(next - target) < 0.01 || frameCount >= 3) {
       state.mapViewport.zoom = target;
+      state.mapZoomActive = false;
       scheduleMapRender();
       return;
     }
@@ -176,6 +193,58 @@ function animateMapZoom() {
   };
 
   state.mapZoomFrame = requestAnimationFrame(tick);
+}
+
+function scheduleMapPanApply() {
+  if (state.mapPanFrame) {
+    return;
+  }
+
+  state.mapPanFrame = requestAnimationFrame(() => {
+    state.mapPanFrame = 0;
+    const nowTs = typeof performance !== "undefined" ? performance.now() : Date.now();
+
+    const geo = state.geometry.map;
+    if (!geo) {
+      state.mapPanDX = 0;
+      state.mapPanDY = 0;
+      return;
+    }
+
+    const dx = state.mapPanDX;
+    const dy = state.mapPanDY;
+    state.mapPanDX = 0;
+    state.mapPanDY = 0;
+
+    if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) {
+      return;
+    }
+
+    // Keep drag responsive by limiting expensive full-map rerenders to ~40 FPS.
+    if (state.draggingTarget === "map" && nowTs - state.mapPanLastRenderTs < 25) {
+      state.mapPanDX += dx;
+      state.mapPanDY += dy;
+      scheduleMapPanApply();
+      return;
+    }
+
+    state.mapViewport.offsetX = clamp(
+      state.mapViewport.offsetX - (dx / Math.max(1, geo.plotW)) / state.mapViewport.zoom,
+      -0.5,
+      0.5
+    );
+    state.mapViewport.offsetY = clamp(
+      state.mapViewport.offsetY + (dy / Math.max(1, geo.plotH)) / state.mapViewport.zoom,
+      -0.5,
+      0.5
+    );
+    state.mapPanLastRenderTs = nowTs;
+    scheduleMapRender();
+
+    if (Math.abs(state.mapPanDX) > 0.01 || Math.abs(state.mapPanDY) > 0.01) {
+      scheduleMapPanApply();
+    }
+  });
 }
 
 function summarizeError(error) {
@@ -1453,6 +1522,8 @@ function renderMapPanel() {
     .map(([name, pts]) => ({ name, points: pts }));
   const mapTimelineMode = state.mapTimeline.mode === "time" ? "time" : "full";
   const mapTimelineTime = clamp(Number.isFinite(state.mapTimeline.time) ? state.mapTimeline.time : mapTimelineExtent.start, mapTimelineExtent.start, mapTimelineExtent.end);
+  const isMapDragging = state.draggingTarget === "map";
+  const isMapZooming = !!state.mapZoomActive;
 
   const sourcePoint = (source.available && Number.isFinite(source.x) && Number.isFinite(source.y))
     ? { x: source.x, y: source.y, depth: source.depth }
@@ -1525,15 +1596,48 @@ function renderMapPanel() {
   let maxX0 = -Infinity;
   let minY0 = Infinity;
   let maxY0 = -Infinity;
-  for (let i = 0; i < extentCandidates.length; i += 1) {
-    const p = extentCandidates[i];
-    if (p.x < minX0) minX0 = p.x;
-    if (p.x > maxX0) maxX0 = p.x;
-    if (p.y < minY0) minY0 = p.y;
-    if (p.y > maxY0) maxY0 = p.y;
+
+  // Prefer bathymetry bounds for default framing so the map occupies
+  // the full panel instead of shrinking around sparse outlier tracks.
+  if (xCoords.length && yCoords.length) {
+    for (let i = 0; i < xCoords.length; i += 1) {
+      const x = xCoords[i];
+      if (!Number.isFinite(x)) {
+        continue;
+      }
+      if (x < minX0) minX0 = x;
+      if (x > maxX0) maxX0 = x;
+    }
+    for (let i = 0; i < yCoords.length; i += 1) {
+      const y = yCoords[i];
+      if (!Number.isFinite(y)) {
+        continue;
+      }
+      if (y < minY0) minY0 = y;
+      if (y > maxY0) maxY0 = y;
+    }
+  } else {
+    for (let i = 0; i < extentCandidates.length; i += 1) {
+      const p = extentCandidates[i];
+      if (p.x < minX0) minX0 = p.x;
+      if (p.x > maxX0) maxX0 = p.x;
+      if (p.y < minY0) minY0 = p.y;
+      if (p.y > maxY0) maxY0 = p.y;
+    }
   }
-  const xPad = Math.max(5, (maxX0 - minX0) * 0.08);
-  const yPad = Math.max(5, (maxY0 - minY0) * 0.08);
+
+  if (!Number.isFinite(minX0) || !Number.isFinite(maxX0) || !Number.isFinite(minY0) || !Number.isFinite(maxY0)) {
+    for (let i = 0; i < extentCandidates.length; i += 1) {
+      const p = extentCandidates[i];
+      if (p.x < minX0) minX0 = p.x;
+      if (p.x > maxX0) maxX0 = p.x;
+      if (p.y < minY0) minY0 = p.y;
+      if (p.y > maxY0) maxY0 = p.y;
+    }
+  }
+
+  const xPad = Math.max(2, (maxX0 - minX0) * 0.025);
+  const yPad = Math.max(2, (maxY0 - minY0) * 0.025);
   const minX = minX0 - xPad;
   const maxX = maxX0 + xPad;
   const minY = minY0 - yPad;
@@ -1670,25 +1774,28 @@ function renderMapPanel() {
     return parts.join("");
   };
 
+  const clipId = "map-plot-clip";
   const parts = [
     `<rect x="0" y="0" width="${width}" height="${height}" fill="rgba(5,11,23,0.97)"></rect>`,
-    `<rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" fill="rgba(8,15,31,0.45)" stroke="rgba(197,223,255,0.18)"></rect>`
+    `<rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" fill="rgba(8,15,31,0.45)" stroke="rgba(197,223,255,0.18)"></rect>`,
+    `<defs><clipPath id="${clipId}"><rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}"></rect></clipPath></defs>`
   ];
+  const mapParts = [];
 
   if (showBathymetry && Array.isArray(grid) && grid.length && xCoords.length && yCoords.length) {
-    parts.push(`<rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" fill="rgba(235,239,244,0.042)"></rect>`);
-    parts.push(buildDataDrivenBathymetry(grid, xCoords, yCoords));
+    mapParts.push(`<rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" fill="rgba(235,239,244,0.042)"></rect>`);
+    mapParts.push(buildDataDrivenBathymetry(grid, xCoords, yCoords));
   }
 
   if (showFiber && Array.isArray(fiberAll) && fiberAll.length > 1) {
     const fiberPts = decimatePoints(
       fiberAll.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)),
-      zoom <= 1.6 ? 360 : 900
+      isMapDragging ? 180 : (isMapZooming ? 240 : (zoom <= 1.6 ? 360 : 900))
     );
     for (let i = 1; i < fiberPts.length; i += 1) {
       const prev = fiberPts[i - 1];
       const curr = fiberPts[i];
-      parts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,79,216,0.34)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></line>`);
+      mapParts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,79,216,0.34)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></line>`);
     }
   }
 
@@ -1704,7 +1811,7 @@ function renderMapPanel() {
         const mx = xScale(markerPt.x);
         const my = yScale(markerPt.y);
         const body = `Type: Selected-channel marker<br>Preview col: ${entry.preview_col}<br>Raw channel: ${entry.raw_das_channel_index}<br>Distance: ${activeDistance.toFixed(1)} m`;
-        parts.push(`<circle class="map-interactive-point map-point-selected-channel" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="6.8" fill="#72f6ff" stroke="rgba(226,236,255,0.95)" stroke-width="1.6" data-tooltip-title="Selected DAS channel" data-tooltip-body="${body}"></circle>`);
+        mapParts.push(`<circle class="map-interactive-point map-point-selected-channel" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="6.8" fill="#72f6ff" stroke="rgba(226,236,255,0.95)" stroke-width="1.6" data-tooltip-title="Selected DAS channel" data-tooltip-body="${body}"></circle>`);
       }
     }
   }
@@ -1715,12 +1822,12 @@ function renderMapPanel() {
       const rawPoints = mapTimelineMode === "time"
         ? track.points.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y) && Number.isFinite(pt?.t) && pt.t <= mapTimelineTime)
         : track.points.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y));
-      const pts = decimatePoints(rawPoints, zoom <= 1.6 ? 260 : 700);
+      const pts = decimatePoints(rawPoints, isMapDragging ? 130 : (isMapZooming ? 170 : (zoom <= 1.6 ? 260 : 700)));
       for (let i = 1; i < pts.length; i += 1) {
         const prev = pts[i - 1];
         const curr = pts[i];
         const body = `Type: Vessel trajectory<br>Track: ${track.name}<br>Coordinates (E, N): ${curr.x.toFixed(1)} m, ${curr.y.toFixed(1)} m${Number.isFinite(curr.t) ? `<br>Track time: ${curr.t.toFixed(2)} s` : ""}`;
-        parts.push(`<line class="map-interactive-line map-track-segment" x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="${color}" stroke-width="1.8" opacity="0.92" data-tooltip-title="Boat Trajectory" data-tooltip-body="${body}"></line>`);
+        mapParts.push(`<line class="map-interactive-line map-track-segment" x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="${color}" stroke-width="1.8" opacity="0.92" data-tooltip-title="Boat Trajectory" data-tooltip-body="${body}"></line>`);
       }
     });
   }
@@ -1728,28 +1835,30 @@ function renderMapPanel() {
   if (showFiber && Array.isArray(fiberAll) && fiberAll.length > 1) {
     const fiberPtsTop = decimatePoints(
       fiberAll.filter((pt) => Number.isFinite(pt?.x) && Number.isFinite(pt?.y)),
-      zoom <= 1.6 ? 420 : 980
+      isMapDragging ? 210 : (isMapZooming ? 280 : (zoom <= 1.6 ? 420 : 980))
     );
     for (let i = 1; i < fiberPtsTop.length; i += 1) {
       const prev = fiberPtsTop[i - 1];
       const curr = fiberPtsTop[i];
-      parts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,79,216,0.22)" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"></line>`);
-      parts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,122,228,0.97)" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"></line>`);
+      mapParts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,79,216,0.22)" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"></line>`);
+      mapParts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,122,228,0.97)" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"></line>`);
     }
   }
 
   if (showTracks && mapTimelineMode === "full") {
-    parts.push(buildTrackPointMarkers(boatTracks || {}, xScale, yScale));
+    mapParts.push(buildTrackPointMarkers(boatTracks || {}, xScale, yScale));
   }
 
   const points = showPoints ? buildSituationPoints(recorders, sourcePoint, xScale, yScale) : "";
   const overlays = mapTimelineMode === "time" ? buildMapTimeOverlays(showTracks ? (boatTracks || {}) : {}, xScale, yScale, mapTimelineTime) : "";
   const legendX = pad.l + plotW + 12;
   const legendY = pad.t + 12;
+  el.mapView?.style.setProperty("--map-legend-right", `${legendX + 170}px`);
   const legend = buildLegend(showTracks ? (boatTracks || {}) : {}, TRACK_PALETTE, legendX, legendY, showFiber);
 
-  parts.push(points);
-  parts.push(overlays);
+  mapParts.push(points);
+  mapParts.push(overlays);
+  parts.push(`<g clip-path="url(#${clipId})">${mapParts.join("")}</g>`);
   parts.push(legend);
 
   state.geometry.map = {
@@ -1780,7 +1889,12 @@ function attachMapHoverHandlers() {
 
   el.mapSvg.addEventListener("mousemove", (event) => {
     if (state.draggingTarget === "map") {
-      clearMapHoverState();
+      const prevNode = state.hover.mapNode;
+      if (prevNode && prevNode.classList) {
+        prevNode.classList.remove("is-hovered");
+      }
+      state.hover.mapNode = null;
+      hideTooltip();
       return;
     }
     const hoverNode = event.target && event.target.closest ? event.target.closest("[data-tooltip-title]") : null;
@@ -1872,20 +1986,6 @@ function bindMapTimelineHandlers() {
   }
 }
 
-function onMapWheel(event) {
-  if (!state.shotBundle) {
-    return;
-  }
-  event.preventDefault();
-
-  const modeScale = event.deltaMode === 1 ? 16 : (event.deltaMode === 2 ? 120 : 1);
-  const normalizedDelta = event.deltaY * modeScale;
-  const factor = clamp(Math.exp(-normalizedDelta * 0.00165), 0.88, 1.14);
-  const currentTarget = Number.isFinite(state.mapViewport.targetZoom) ? state.mapViewport.targetZoom : state.mapViewport.zoom;
-  state.mapViewport.targetZoom = clamp(currentTarget * factor, 1, 8);
-  animateMapZoom();
-}
-
 function zoomMapAtClientPoint(clientX, clientY, multiplier) {
   if (!state.shotBundle || !el.mapSvg) {
     return;
@@ -1921,11 +2021,17 @@ function zoomMapAtClientPoint(clientX, clientY, multiplier) {
 }
 
 function onMapDoubleClick(event) {
-  if (!state.shotBundle) {
+  event.preventDefault();
+}
+
+function zoomMapFromPanelButton(multiplier) {
+  if (!el.mapSvg) {
     return;
   }
-  event.preventDefault();
-  zoomMapAtClientPoint(event.clientX, event.clientY, event.shiftKey ? (1 / 1.55) : 1.55);
+  const rect = el.mapSvg.getBoundingClientRect();
+  const cx = rect.left + rect.width * 0.5;
+  const cy = rect.top + rect.height * 0.5;
+  zoomMapAtClientPoint(cx, cy, multiplier);
 }
 
 function mapClientToWorld(clientX, clientY) {
@@ -2084,23 +2190,27 @@ function onMapPointerDown(event) {
   if (typeof event.button === "number" && event.button !== 0) {
     return;
   }
+  event.preventDefault();
   state.draggingTarget = "map";
   state.mapPointerDown = { x: event.clientX, y: event.clientY, moved: false };
+  state.mapPanLastRenderTs = 0;
   state.hover.map = { x: event.clientX, y: event.clientY };
-  el.mapSvg.style.cursor = "grabbing";
+  if (el.mapSvg) {
+    el.mapSvg.style.cursor = "grabbing";
+  }
 }
 
 function onMapPointerMove(event) {
-  if (state.draggingTarget !== "map" || !state.hover.map) {
+  if (state.draggingTarget !== "map") {
     return;
   }
-  const geo = state.geometry.map;
-  if (!geo) {
+  if (!state.geometry.map) {
     return;
   }
 
-  const dx = event.clientX - state.hover.map.x;
-  const dy = event.clientY - state.hover.map.y;
+  const prev = state.hover.map || { x: event.clientX, y: event.clientY };
+  const dx = event.clientX - prev.x;
+  const dy = event.clientY - prev.y;
   state.hover.map = { x: event.clientX, y: event.clientY };
   if (state.mapPointerDown && !state.mapPointerDown.moved) {
     const ddx = event.clientX - state.mapPointerDown.x;
@@ -2110,9 +2220,9 @@ function onMapPointerMove(event) {
     }
   }
 
-  state.mapViewport.offsetX = clamp(state.mapViewport.offsetX - (dx / Math.max(1, geo.plotW)) / state.mapViewport.zoom, -0.5, 0.5);
-  state.mapViewport.offsetY = clamp(state.mapViewport.offsetY + (dy / Math.max(1, geo.plotH)) / state.mapViewport.zoom, -0.5, 0.5);
-  scheduleMapRender();
+  state.mapPanDX += dx;
+  state.mapPanDY += dy;
+  scheduleMapPanApply();
 }
 
 function onMapTouchStart(event) {
@@ -2145,6 +2255,19 @@ function onMapTouchMove(event) {
 
 function onMapTouchEnd() {
   onGlobalPointerUp();
+}
+
+function bindMapZoomButtonHandlers() {
+  if (el.mapZoomIn) {
+    el.mapZoomIn.addEventListener("click", () => {
+      zoomMapFromPanelButton(1.28);
+    });
+  }
+  if (el.mapZoomOut) {
+    el.mapZoomOut.addEventListener("click", () => {
+      zoomMapFromPanelButton(1 / 1.28);
+    });
+  }
 }
 
 function renderEventNavigation() {
@@ -2821,13 +2944,20 @@ function bindSelchCanvas(canvas) {
 }
 
 function onGlobalPointerUp(event) {
+  const wasMapDrag = state.draggingTarget === "map";
   if (state.draggingTarget === "map" && state.mapPointerDown && !state.mapPointerDown.moved && event && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
     tryMapClickSelectChannel(event.clientX, event.clientY);
   }
   state.draggingTarget = null;
   state.mapPointerDown = null;
+  state.mapPanDX = 0;
+  state.mapPanDY = 0;
+  state.mapPanLastRenderTs = 0;
   if (el.mapSvg) {
     el.mapSvg.style.cursor = "grab";
+  }
+  if (wasMapDrag) {
+    scheduleMapRender();
   }
 }
 
@@ -2959,7 +3089,7 @@ function applySelectedChannelPayload(sc, payload, entry) {
 
 async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
   const files = manifest?.files || {};
-  const demo = manifest?.selected_channel_demo;
+  const demo = manifest?.selected_channel_demo || null;
 
   if (manifest?.selected_channel_mode_available === false) {
     return {
@@ -2967,23 +3097,16 @@ async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
       message: "Selected-channel mode not available for this shot (manifest flag)."
     };
   }
-  if (!demo || !files.selected_channel_bundle) {
-    return { available: false, message: "Selected-channel mode not available for this shot." };
-  }
 
   const baseDir = getBaseDir(manifestUrl);
+  const selectedIndexRel = files.selected_channels_index || "selected_channels_index.json";
+  const selectedBundleRel = files.selected_channel_bundle || "selected_channel_bundle.json";
 
-  if (files.selected_channels_index) {
-    let index;
-    try {
-      index = await fetchJson(`${baseDir}/${files.selected_channels_index}`);
-    } catch (error) {
-      return { available: false, message: `Could not load selected-channels index: ${summarizeError(error)}` };
-    }
+  // Frontend compatibility: support selected-channel exports even when
+  // viewer_manifest.json has not yet been patched with selected_channel_* keys.
+  const index = await fetchJsonFromManifestPaths(baseDir, selectedIndexRel);
+  if (index && Array.isArray(index.channels) && index.channels.length > 0) {
     const channels = index.channels;
-    if (!Array.isArray(channels) || channels.length === 0) {
-      return { available: false, message: "Selected-channels index is empty." };
-    }
     const entryByCol = {};
     channels.forEach((ch) => {
       if (ch && Number.isFinite(ch.preview_col)) {
@@ -2991,7 +3114,7 @@ async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
       }
     });
     const defaultCol = Number(
-      index.default_preview_col ?? demo.default_preview_col ?? demo.preview_column ?? channels[0].preview_col
+      index.default_preview_col ?? demo?.default_preview_col ?? demo?.preview_column ?? channels[0].preview_col
     );
     const defaultEntry = entryByCol[String(defaultCol)];
     if (!defaultEntry?.files) {
@@ -3004,7 +3127,14 @@ async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
         available: true,
         multiChannel: channels.length > 1,
         baseDir,
-        manifestDemo: demo,
+        manifestDemo:
+          demo || {
+            mode: "v2",
+            default_preview_col: defaultCol,
+            available_preview_cols: channels
+              .map((ch) => ch?.preview_col)
+              .filter((value) => Number.isFinite(value))
+          },
         channelsIndex: index,
         entryByCol,
         activePreviewCol: defaultCol,
@@ -3024,14 +3154,22 @@ async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
 
   let meta;
   try {
-    meta = await fetchJson(`${baseDir}/${files.selected_channel_bundle}`);
+    meta = await fetchJsonFromManifestPaths(baseDir, selectedBundleRel);
+    if (!meta) {
+      return {
+        available: false,
+        message: "Selected-channel mode not available for this shot (bundle/index files not found)."
+      };
+    }
   } catch (error) {
     return { available: false, message: `Could not load selected-channel bundle: ${summarizeError(error)}` };
   }
 
-  const sigRel = files.selected_channel_signal || meta?.bundle_files?.signal_npz;
-  const specRel = files.selected_channel_spectrogram || meta?.bundle_files?.spectrogram_npz;
-  const bandRel = files.selected_channel_bandpass_score || meta?.bundle_files?.bandpass_score_npz;
+  const sigRel = files.selected_channel_signal || meta?.bundle_files?.signal_npz || "selected_channel_signal.npz";
+  const specRel =
+    files.selected_channel_spectrogram || meta?.bundle_files?.spectrogram_npz || "selected_channel_spectrogram.npz";
+  const bandRel =
+    files.selected_channel_bandpass_score || meta?.bundle_files?.bandpass_score_npz || "selected_channel_bandpass_score.npz";
 
   if (!sigRel || !specRel || !bandRel) {
     return { available: false, message: "Selected-channel export paths are incomplete in the manifest." };
@@ -3043,7 +3181,15 @@ async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
       available: true,
       multiChannel: false,
       baseDir,
-      manifestDemo: demo,
+      manifestDemo:
+        demo || {
+          mode: "v1",
+          preview_column: meta?.selected_preview_col,
+          raw_das_channel: meta?.selected_raw_channel,
+          band_hz: meta?.recommended_bandpass_hz,
+          channel_label: meta?.selected_channel_label,
+          notes: ["Loaded from selected_channel_bundle.json auto-discovery (manifest keys optional)."]
+        },
       meta,
       ...payload
     };
@@ -3364,19 +3510,19 @@ function bindEvents() {
     });
   }
 
-  el.mapSvg.addEventListener("wheel", onMapWheel, { passive: false });
   el.mapSvg.addEventListener("dblclick", onMapDoubleClick);
   el.mapSvg.addEventListener("mousedown", onMapPointerDown);
-  el.mapSvg.addEventListener("mousemove", onMapPointerMove, { passive: true });
   el.mapSvg.addEventListener("touchstart", onMapTouchStart, { passive: false });
   el.mapSvg.addEventListener("touchmove", onMapTouchMove, { passive: false });
   el.mapSvg.addEventListener("touchend", onMapTouchEnd, { passive: true });
   el.mapSvg.addEventListener("touchcancel", onMapTouchEnd, { passive: true });
 
+  window.addEventListener("mousemove", onMapPointerMove, { passive: true });
   window.addEventListener("mouseup", onGlobalPointerUp, { passive: true });
 
   bindMapControlHandlers();
   bindMapTimelineHandlers();
+  bindMapZoomButtonHandlers();
 
   window.addEventListener("resize", () => {
     if (state.shotBundle) {

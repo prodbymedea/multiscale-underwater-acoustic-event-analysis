@@ -175,7 +175,13 @@
           <p id="map-time-note" class="map-time-note">Full map mode keeps the complete spatial context visible. Switch to time-filtered map to explore the situation timeline independently from DAS/hydro controls.</p>
         </div>
         <div id="map-view" class="panel-placeholder">
-          <svg id="map-svg" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-label="Spatial context"></svg>
+          <div class="map-canvas-wrap">
+            <svg id="map-svg" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-label="Spatial context"></svg>
+            <div class="map-zoom-controls" aria-label="Map zoom controls">
+              <button id="map-zoom-in" class="map-zoom-btn" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+              <button id="map-zoom-out" class="map-zoom-btn" type="button" title="Zoom out" aria-label="Zoom out">-</button>
+            </div>
+          </div>
           <p id="map-caption" class="panel-caption">Waiting for spatial context...</p>
         </div>
       </article>
