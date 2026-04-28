@@ -89,6 +89,13 @@ const el = {
   mapTimeSlider: document.getElementById("map-time-slider"),
   mapTimeValue: document.getElementById("map-time-value"),
   mapTimeNote: document.getElementById("map-time-note"),
+  mapSummaryShot: document.getElementById("map-summary-shot"),
+  mapSummaryEvents: document.getElementById("map-summary-events"),
+  mapSummaryInterval: document.getElementById("map-summary-interval"),
+  mapSummaryChannel: document.getElementById("map-summary-channel"),
+  mapSummaryDistance: document.getElementById("map-summary-distance"),
+  mapSummarySource: document.getElementById("map-summary-source"),
+  mapSummaryHint: document.getElementById("map-summary-hint"),
   mapZoomIn: document.getElementById("map-zoom-in"),
   mapZoomOut: document.getElementById("map-zoom-out"),
   mapView: document.getElementById("map-view"),
@@ -257,6 +264,7 @@ function summarizeError(error) {
 function showTooltip(title, body, clientX, clientY) {
   const tip = el.hoverTooltip;
   tip.innerHTML = `<div class="title">${title}</div><p class="body">${body}</p>`;
+  tip.classList.toggle("tooltip-selected-channel", title === "Selected DAS channel");
   tip.classList.add("visible");
   tip.setAttribute("aria-hidden", "false");
 
@@ -1061,6 +1069,57 @@ function syncCursorToInterval() {
 function updateCurrentIntervalLabel() {
   const interval = getCurrentInterval();
   el.metaCurrentInterval.textContent = `${formatSeconds(interval.start)} to ${formatSeconds(interval.end)}`;
+  updateMapShotSummary();
+}
+
+function getSelectedChannelSummary() {
+  const sc = state.shotBundle?.selectedChannel;
+  if (!sc?.available) {
+    return {
+      channel: "Unavailable",
+      distance: "-"
+    };
+  }
+
+  const previewCol = Number(sc.activePreviewCol ?? sc.meta?.selected_preview_col ?? sc.manifestDemo?.preview_column ?? sc.manifestDemo?.default_preview_col);
+  const entry = Number.isFinite(previewCol) ? sc.entryByCol?.[String(previewCol)] : null;
+  const raw = Number(entry?.raw_das_channel_index ?? sc.meta?.selected_raw_channel ?? sc.manifestDemo?.raw_das_channel);
+  const distance = Number(entry?.distance_m ?? sc.meta?.selected_distance_m);
+  const parts = [];
+
+  if (Number.isFinite(previewCol)) {
+    parts.push(`preview ${previewCol}`);
+  }
+  if (Number.isFinite(raw)) {
+    parts.push(`raw ${raw}`);
+  }
+
+  return {
+    channel: parts.length ? parts.join(" / ") : (sc.meta?.selected_channel_label || "Loaded"),
+    distance: Number.isFinite(distance) ? `${distance.toFixed(1)} m` : "-"
+  };
+}
+
+function updateMapShotSummary() {
+  if (!el.mapSummaryShot) {
+    return;
+  }
+
+  const shotId = state.selectedManifest?.shot_id || state.selectedShotId || "-";
+  const interval = getCurrentInterval();
+  const sourceGt = getSourceGroundTruth();
+  const selectedChannel = getSelectedChannelSummary();
+  const sc = state.shotBundle?.selectedChannel;
+
+  el.mapSummaryShot.textContent = shotId;
+  el.mapSummaryEvents.textContent = Number.isFinite(state.eventCount) ? String(state.eventCount) : "Unknown";
+  el.mapSummaryInterval.textContent = `${formatSeconds(interval.start)} to ${formatSeconds(interval.end)}`;
+  el.mapSummaryChannel.textContent = selectedChannel.channel;
+  el.mapSummaryDistance.textContent = selectedChannel.distance;
+  el.mapSummarySource.textContent = sourceGt.available ? "Available" : "Not available";
+  el.mapSummaryHint.textContent = sc?.available && sc.multiChannel
+    ? "Click fiber to select nearest exported channel."
+    : "Selected-channel export is fixed for this shot.";
 }
 
 function updatePlaybackLabel() {
@@ -1106,21 +1165,26 @@ function renderActiveEventLabel() {
 function getSourceGroundTruth() {
   const manifestSource = state.selectedManifest?.source_ground_truth;
   if (manifestSource?.available) {
+    const x = Number(manifestSource.position_xy_m?.[0]);
+    const y = Number(manifestSource.position_xy_m?.[1]);
+    const depth = Number(manifestSource.depth_m);
     return {
       available: true,
-      x: manifestSource.position_xy_m?.[0],
-      y: manifestSource.position_xy_m?.[1],
-      depth: manifestSource.depth_m
+      x,
+      y,
+      depth
     };
   }
 
   const source = state.shotBundle?.shotMetadata?.source;
-  if (source && Number.isFinite(source.pos_x_m) && Number.isFinite(source.pos_y_m)) {
+  const sourceX = Number(source?.pos_x_m);
+  const sourceY = Number(source?.pos_y_m);
+  if (source && Number.isFinite(sourceX) && Number.isFinite(sourceY)) {
     return {
       available: true,
-      x: source.pos_x_m,
-      y: source.pos_y_m,
-      depth: source.depth_m
+      x: sourceX,
+      y: sourceY,
+      depth: Number(source.depth_m)
     };
   }
 
@@ -1390,8 +1454,22 @@ function buildSituationPoints(recorders, sourcePoint, xScale, yScale) {
   if (sourcePoint) {
     const cx = xScale(sourcePoint.x);
     const cy = yScale(sourcePoint.y);
-    parts.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="14" fill="rgba(255,79,216,0.23)"></circle>`);
-    parts.push(`<circle class="map-interactive-point map-point-source" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="6.5" fill="#ff4fd8" stroke="rgba(255,236,251,0.9)" stroke-width="1.35" data-tooltip-title="Source Reference" data-tooltip-body="Type: Reference source<br>Coordinates (E, N): ${sourcePoint.x.toFixed(1)} m, ${sourcePoint.y.toFixed(1)} m${Number.isFinite(sourcePoint.depth) ? `<br>Depth: ${sourcePoint.depth.toFixed(1)} m` : ""}"></circle>`);
+    const star = [
+      [cx, cy - 12],
+      [cx + 3.1, cy - 4.1],
+      [cx + 11.5, cy - 4.1],
+      [cx + 4.7, cy + 1.4],
+      [cx + 7.2, cy + 9.8],
+      [cx, cy + 4.8],
+      [cx - 7.2, cy + 9.8],
+      [cx - 4.7, cy + 1.4],
+      [cx - 11.5, cy - 4.1],
+      [cx - 3.1, cy - 4.1]
+    ].map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
+    parts.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="18" fill="rgba(255,122,89,0.2)"></circle>`);
+    parts.push(`<polygon class="map-interactive-point map-point-source" points="${star}" fill="#ff7a59" stroke="rgba(255,244,224,0.96)" stroke-width="1.7" data-tooltip-title="Signal source" data-tooltip-body="Type: acoustic playback source<br>Coordinates (E, N): ${sourcePoint.x.toFixed(1)} m, ${sourcePoint.y.toFixed(1)} m${Number.isFinite(sourcePoint.depth) ? `<br>Depth: ${sourcePoint.depth.toFixed(1)} m` : ""}"></polygon>`);
+    // Small label placed to the right/above the marker for clarity
+    parts.push(`<text class="map-point-source-label" x="${(cx + 14).toFixed(2)}" y="${(cy - 6).toFixed(2)}" fill="#ffd9c6" font-size="11" font-family="sans-serif">Source</text>`);
   }
 
   return parts.join("");
@@ -1415,7 +1493,7 @@ function buildMapTimeOverlays(tracks, xScale, yScale, mapTime) {
       const x = xScale(currentPoint.x);
       const y = yScale(currentPoint.y);
       parts.push(`<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="14" fill="${color}" opacity="0.24"></circle>`);
-      parts.push(`<circle class="map-interactive-point map-point-boatcue" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="6.4" fill="${color}" stroke="rgba(226,236,255,0.86)" stroke-width="1.35" data-tooltip-title="Boat Position Cue" data-tooltip-body="Type: Independent track marker<br>Track: ${trackName}<br>Coordinates (E, N): ${currentPoint.x.toFixed(1)} m, ${currentPoint.y.toFixed(1)} m${Number.isFinite(currentPoint.t) ? `<br>Map time: ${currentPoint.t.toFixed(2)} s` : ""}"></circle>`);
+      parts.push(`<circle class="map-interactive-point map-point-boatcue" cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="5.2" fill="${color}" opacity="0.72" stroke="rgba(226,236,255,0.7)" stroke-width="1.1" data-tooltip-title="Boat Position Cue" data-tooltip-body="Type: Independent track marker<br>Track: ${trackName}<br>Coordinates (E, N): ${currentPoint.x.toFixed(1)} m, ${currentPoint.y.toFixed(1)} m${Number.isFinite(currentPoint.t) ? `<br>Map time: ${currentPoint.t.toFixed(2)} s` : ""}"></circle>`);
     }
   }
 
@@ -1441,8 +1519,8 @@ function buildTrackPointMarkers(tracks, xScale, yScale) {
         continue;
       }
 
-      parts.push(`<circle cx="${xScale(endPoint.x).toFixed(2)}" cy="${yScale(endPoint.y).toFixed(2)}" r="14" fill="${color}" opacity="0.24"></circle>`);
-      parts.push(`<circle class="map-interactive-point map-point-boatcue" cx="${xScale(endPoint.x).toFixed(2)}" cy="${yScale(endPoint.y).toFixed(2)}" r="6.4" fill="${color}" stroke="rgba(226,236,255,0.86)" stroke-width="1.35" data-tooltip-title="Final Boat Position" data-tooltip-body="Type: End position<br>Track: ${trackName}<br>Coordinates (E, N): ${endPoint.x.toFixed(1)} m, ${endPoint.y.toFixed(1)} m${Number.isFinite(endPoint.t) ? `<br>Track time: ${endPoint.t.toFixed(2)} s` : ""}"></circle>`);
+      parts.push(`<circle cx="${xScale(endPoint.x).toFixed(2)}" cy="${yScale(endPoint.y).toFixed(2)}" r="11" fill="${color}" opacity="0.12"></circle>`);
+      parts.push(`<circle class="map-interactive-point map-point-boatcue" cx="${xScale(endPoint.x).toFixed(2)}" cy="${yScale(endPoint.y).toFixed(2)}" r="5.2" fill="${color}" opacity="0.68" stroke="rgba(226,236,255,0.68)" stroke-width="1.1" data-tooltip-title="Final Boat Position" data-tooltip-body="Type: End position<br>Track: ${trackName}<br>Coordinates (E, N): ${endPoint.x.toFixed(1)} m, ${endPoint.y.toFixed(1)} m${Number.isFinite(endPoint.t) ? `<br>Track time: ${endPoint.t.toFixed(2)} s` : ""}"></circle>`);
     }
   }
 
@@ -1800,6 +1878,8 @@ function renderMapPanel() {
   }
 
   const sc = state.shotBundle?.selectedChannel;
+  // Prepare selected-channel marker parts but do not push them yet so they render on top of other layers.
+  let _selectedChannelParts = null;
   if (fiberSelection && sc?.available && sc.multiChannel && Number.isFinite(sc.activePreviewCol)) {
     const entry = sc.entryByCol?.[String(sc.activePreviewCol)];
     const stats = getSelectedChannelsDistanceStats(sc);
@@ -1811,7 +1891,13 @@ function renderMapPanel() {
         const mx = xScale(markerPt.x);
         const my = yScale(markerPt.y);
         const body = `Type: Selected-channel marker<br>Preview col: ${entry.preview_col}<br>Raw channel: ${entry.raw_das_channel_index}<br>Distance: ${activeDistance.toFixed(1)} m`;
-        mapParts.push(`<circle class="map-interactive-point map-point-selected-channel" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="6.8" fill="#72f6ff" stroke="rgba(226,236,255,0.95)" stroke-width="1.6" data-tooltip-title="Selected DAS channel" data-tooltip-body="${body}"></circle>`);
+        _selectedChannelParts = [];
+        // soft active hotspot with a subtle pulse
+        _selectedChannelParts.push(`<circle class="map-point-selected-channel-glow" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="18" fill="rgba(255,107,129,0.16)"></circle>`);
+        _selectedChannelParts.push(`<circle class="map-point-selected-channel-ring" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="11.6" fill="none" stroke="#ff6b81" stroke-width="2.8"></circle>`);
+        _selectedChannelParts.push(`<circle class="map-point-selected-channel-center" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="5.4" fill="#ff7b8f" stroke="rgba(255,255,255,0.22)" stroke-width="0.8"></circle>`);
+        // invisible hit area keeps tooltip easy to trigger without adding visual weight
+        _selectedChannelParts.push(`<circle class="map-interactive-point map-point-selected-channel" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="7.6" fill="rgba(255,255,255,0.001)" data-tooltip-title="Selected DAS channel" data-tooltip-body="${body}"></circle>`);
       }
     }
   }
@@ -1827,7 +1913,7 @@ function renderMapPanel() {
         const prev = pts[i - 1];
         const curr = pts[i];
         const body = `Type: Vessel trajectory<br>Track: ${track.name}<br>Coordinates (E, N): ${curr.x.toFixed(1)} m, ${curr.y.toFixed(1)} m${Number.isFinite(curr.t) ? `<br>Track time: ${curr.t.toFixed(2)} s` : ""}`;
-        mapParts.push(`<line class="map-interactive-line map-track-segment" x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="${color}" stroke-width="1.8" opacity="0.92" data-tooltip-title="Boat Trajectory" data-tooltip-body="${body}"></line>`);
+        mapParts.push(`<line class="map-interactive-line map-track-segment" x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="${color}" stroke-width="1.9" opacity="0.44" data-tooltip-title="Boat Trajectory" data-tooltip-body="${body}"></line>`);
       }
     });
   }
@@ -1841,7 +1927,7 @@ function renderMapPanel() {
       const prev = fiberPtsTop[i - 1];
       const curr = fiberPtsTop[i];
       mapParts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,79,216,0.22)" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"></line>`);
-      mapParts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,122,228,0.97)" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"></line>`);
+      mapParts.push(`<line x1="${xScale(prev.x).toFixed(2)}" y1="${yScale(prev.y).toFixed(2)}" x2="${xScale(curr.x).toFixed(2)}" y2="${yScale(curr.y).toFixed(2)}" stroke="rgba(255,122,228,0.97)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"></line>`);
     }
   }
 
@@ -1856,8 +1942,13 @@ function renderMapPanel() {
   el.mapView?.style.setProperty("--map-legend-right", `${legendX + 170}px`);
   const legend = buildLegend(showTracks ? (boatTracks || {}) : {}, TRACK_PALETTE, legendX, legendY, showFiber);
 
+  // Render points (recorders, source) and overlays first
   mapParts.push(points);
   mapParts.push(overlays);
+  // Then render selected-channel marker parts on top for visibility
+  if (Array.isArray(_selectedChannelParts)) {
+    for (const p of _selectedChannelParts) mapParts.push(p);
+  }
   parts.push(`<g clip-path="url(#${clipId})">${mapParts.join("")}</g>`);
   parts.push(legend);
 
@@ -2822,6 +2913,7 @@ function renderAllPanels() {
   renderHydroPanel();
   renderSelectedChannelPanel();
   renderEventNavigation();
+  updateMapShotSummary();
 }
 
 function applyIntervalSelection(statusMessage = null) {
@@ -3213,6 +3305,7 @@ async function switchSelectedChannelToPreviewCol(previewCol) {
   }
   if (sc.activePreviewCol === previewCol) {
     scheduleMainRender();
+    scheduleMapRender();
     return;
   }
   const cached = sc.channelCache[key];
@@ -3223,6 +3316,7 @@ async function switchSelectedChannelToPreviewCol(previewCol) {
       el.selchChannelSelect.value = key;
     }
     scheduleMainRender();
+    scheduleMapRender();
     return;
   }
   updateDataStatus(`Loading Orca selected-channel preview col ${previewCol}…`);
@@ -3237,6 +3331,7 @@ async function switchSelectedChannelToPreviewCol(previewCol) {
     }
     updateDataStatus(`Selected-channel preview col ${previewCol} loaded.`);
     scheduleMainRender();
+    scheduleMapRender();
   } catch (error) {
     updateDataStatus(`Selected-channel load failed: ${summarizeError(error)}`);
   }

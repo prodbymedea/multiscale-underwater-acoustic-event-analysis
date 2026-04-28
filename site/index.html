@@ -56,32 +56,19 @@
       </section>
 
       <section class="layout-grid" aria-label="Main visualization layout">
-        <article class="panel panel-das" aria-labelledby="das-heading">
-          <h2 id="das-heading">DAS Activity View</h2>
-          <div id="das-view" class="panel-placeholder">
-            <canvas id="das-canvas" width="1200" height="420" aria-label="DAS activity heatmap"></canvas>
-            <p id="das-caption" class="panel-caption">Waiting for DAS activity data...</p>
-          </div>
-        </article>
-
-        <article class="panel panel-hydro" aria-labelledby="hydro-heading">
-          <h2 id="hydro-heading">Hydrophone Support View</h2>
-          <div id="hydrophone-view" class="panel-placeholder">
-            <svg id="hydro-svg" viewBox="0 0 1200 300" preserveAspectRatio="none" aria-label="Hydrophone support score"></svg>
-            <p id="hydro-caption" class="panel-caption">Waiting for hydrophone support score...</p>
-          </div>
-        </article>
-
         <article class="panel panel-selected-channel" aria-labelledby="selch-heading">
-          <h2 id="selch-heading">Selected-channel DAS (Orca demo)</h2>
+          <h2 id="selch-heading">Selected-channel DAS</h2>
           <p id="selch-unavailable" class="selch-unavailable" hidden>Selected-channel mode not available for this shot.</p>
           <div id="selch-content" class="selch-content">
             <div id="selch-channel-wrap" class="selch-channel-wrap" hidden>
               <label for="selch-channel-select" class="selch-channel-label">Preview column</label>
-              <select id="selch-channel-select" aria-label="Orca DAS preview column"></select>
+              <select id="selch-channel-select" aria-label="DAS preview column"></select>
             </div>
             <p id="selch-subtitle" class="selch-subtitle"></p>
-            <p class="selch-disclaimer">Band-pass trace is DAS support only — not whale probability.</p>
+            <p class="selch-disclaimer">
+              This panel shows one DAS channel. Bright spectrogram streaks and green pulse bars are channel-level DAS pulses.
+              Hydrophone candidate intervals are shown as purple regions.
+            </p>
             <div class="selch-canvases">
               <div class="selch-block">
                 <span class="selch-label">Spectrogram (native-rate STFT, dB)</span>
@@ -90,6 +77,10 @@
               <div class="selch-block">
                 <span class="selch-label">Band-pass support score + threshold</span>
                 <canvas id="selch-band-canvas" width="1200" height="120" aria-label="Band-pass support score"></canvas>
+              </div>
+              <div class="selch-block selch-pulse-block">
+                <span class="selch-label">DAS signal-present timeline</span>
+                <canvas id="selch-pulse-canvas" width="1200" height="56" aria-label="DAS signal-present timeline"></canvas>
               </div>
               <div class="selch-block">
                 <span class="selch-label">Waveform (median-centered)</span>
@@ -100,92 +91,107 @@
           </div>
         </article>
 
-      <aside class="panel panel-sidebar" aria-labelledby="meta-heading">
-        <h2 id="meta-heading">Shot & Event Summary</h2>
-        <dl class="meta-list">
-          <div>
-            <dt>Selected shot</dt>
-            <dd id="meta-shot">-</dd>
-          </div>
-          <div>
-            <dt>Available time range</dt>
-            <dd id="meta-time-range">-</dd>
-          </div>
-          <div>
-            <dt>Recommended interval</dt>
-            <dd id="meta-recommended">-</dd>
-          </div>
-          <div>
-            <dt>Current interval</dt>
-            <dd id="meta-current-interval">-</dd>
-          </div>
-          <div>
-            <dt>Event count</dt>
-            <dd id="meta-event-count">-</dd>
-          </div>
-          <div>
-            <dt>Active event</dt>
-            <dd id="meta-active-event">None</dd>
-          </div>
-          <div>
-            <dt>Source ground truth</dt>
-            <dd id="meta-ground-truth">-</dd>
-          </div>
-          <div>
-            <dt>Event navigation</dt>
-            <dd>
-              <div id="event-nav" class="event-nav"></div>
-            </dd>
-          </div>
-        </dl>
-        <p id="data-status" class="data-status">
-          Loading viewer metadata...
-        </p>
-      </aside>
-    </section>
-
-    <section class="layout-grid map-section" aria-label="Spatial context">
-      <article class="panel panel-map" aria-labelledby="map-heading">
-        <div class="map-head">
-          <div>
-            <h2 id="map-heading">Bathymetry + Fiber Track + Boat Tracks</h2>
-          </div>
-          <span class="map-badge">Spatial Main View</span>
-        </div>
-        <div class="map-controls" id="map-controls">
-          <button class="map-toggle" data-layer="bathymetry" type="button" aria-pressed="true" title="Toggle bathymetry layer">Bathymetry</button>
-          <button class="map-toggle" data-layer="fiber" type="button" aria-pressed="true" title="Toggle fiber track">Fiber</button>
-          <button class="map-toggle" data-layer="tracks" type="button" aria-pressed="true" title="Toggle boat tracks">Boat tracks</button>
-          <button class="map-toggle" data-layer="points" type="button" aria-pressed="true" title="Toggle recorder/source points">Points</button>
-          <button class="map-toggle map-toggle-reset" data-action="reset-view" type="button" title="Reset map view">Reset view</button>
-        </div>
-        <div class="map-time-controls" id="map-time-controls">
-          <div class="map-time-head">
-            <span class="map-time-label">Map timeline</span>
-            <span id="map-time-value" class="map-time-value">Full map</span>
-          </div>
-          <div class="map-time-buttons">
-            <button id="map-mode-full" class="map-toggle" type="button" aria-pressed="true" title="Show the full spatial context">Full map</button>
-            <button id="map-mode-time" class="map-toggle" type="button" aria-pressed="false" title="Filter the map by the situation timeline">Time-filtered map</button>
-            <button id="map-time-play" class="map-toggle map-toggle-play" type="button" aria-pressed="false" title="Play or pause map timeline">Play timeline</button>
-          </div>
-          <div class="map-time-slider-row">
-            <input id="map-time-slider" type="range" min="0" max="1" step="0.1" value="0" aria-label="Map timeline position" />
-          </div>
-          <p id="map-time-note" class="map-time-note">Full map mode keeps the complete spatial context visible. Switch to time-filtered map to explore the situation timeline independently from DAS/hydro controls.</p>
-        </div>
-        <div id="map-view" class="panel-placeholder">
-          <div class="map-canvas-wrap">
-            <svg id="map-svg" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-label="Spatial context"></svg>
-            <div class="map-zoom-controls" aria-label="Map zoom controls">
-              <button id="map-zoom-in" class="map-zoom-btn" type="button" title="Zoom in" aria-label="Zoom in">+</button>
-              <button id="map-zoom-out" class="map-zoom-btn" type="button" title="Zoom out" aria-label="Zoom out">-</button>
+        <article class="panel panel-map" aria-labelledby="map-heading">
+          <div class="map-head">
+            <div>
+              <h2 id="map-heading">Spatial Context / Channel Map</h2>
+              <p class="map-subtitle">Click fiber to select nearest exported channel.</p>
             </div>
+            <span class="map-badge">Context</span>
           </div>
-          <p id="map-caption" class="panel-caption">Waiting for spatial context...</p>
-        </div>
-      </article>
-    </section>
+          <div class="map-controls" id="map-controls">
+            <button class="map-toggle" data-layer="bathymetry" type="button" aria-pressed="true" title="Toggle bathymetry layer">Bathymetry</button>
+            <button class="map-toggle" data-layer="fiber" type="button" aria-pressed="true" title="Toggle fiber track">Fiber</button>
+            <button class="map-toggle" data-layer="tracks" type="button" aria-pressed="true" title="Toggle boat tracks">Boat tracks</button>
+            <button class="map-toggle" data-layer="points" type="button" aria-pressed="true" title="Toggle recorder/source points">Points</button>
+            <button class="map-toggle map-toggle-reset" data-action="reset-view" type="button" title="Reset map view">Reset view</button>
+          </div>
+          <div class="map-time-controls" id="map-time-controls">
+            <div class="map-time-head">
+              <span class="map-time-label">Map timeline</span>
+              <span id="map-time-value" class="map-time-value">Full map</span>
+            </div>
+            <div class="map-time-buttons">
+              <button id="map-mode-full" class="map-toggle" type="button" aria-pressed="true" title="Show the full spatial context">Full map</button>
+              <button id="map-mode-time" class="map-toggle" type="button" aria-pressed="false" title="Filter the map by the situation timeline">Time-filtered map</button>
+              <button id="map-time-play" class="map-toggle map-toggle-play" type="button" aria-pressed="false" title="Play or pause map timeline">Play timeline</button>
+            </div>
+            <div class="map-time-slider-row">
+              <input id="map-time-slider" type="range" min="0" max="1" step="0.1" value="0" aria-label="Map timeline position" />
+            </div>
+            <p id="map-time-note" class="map-time-note">Full map mode keeps complete spatial context visible.</p>
+          </div>
+          <div id="map-view" class="panel-placeholder">
+            <div class="map-canvas-wrap">
+              <svg id="map-svg" viewBox="0 0 1200 500" preserveAspectRatio="none" aria-label="Spatial context"></svg>
+              <div class="map-zoom-controls" aria-label="Map zoom controls">
+                <button id="map-zoom-in" class="map-zoom-btn" type="button" title="Zoom in" aria-label="Zoom in">+</button>
+                <button id="map-zoom-out" class="map-zoom-btn" type="button" title="Zoom out" aria-label="Zoom out">-</button>
+              </div>
+            </div>
+            <p id="map-caption" class="panel-caption">Waiting for spatial context...</p>
+          </div>
+        </article>
+
+        <article class="panel panel-hydro" aria-labelledby="hydro-heading">
+          <h2 id="hydro-heading">Hydrophone Support</h2>
+          <div id="hydrophone-view" class="panel-placeholder">
+            <svg id="hydro-svg" viewBox="0 0 1200 300" preserveAspectRatio="none" aria-label="Hydrophone support score"></svg>
+            <p id="hydro-caption" class="panel-caption">Waiting for hydrophone support score...</p>
+          </div>
+        </article>
+
+        <article class="panel panel-das" aria-labelledby="das-heading">
+          <h2 id="das-heading">DAS Activity Overview</h2>
+          <div id="das-view" class="panel-placeholder">
+            <canvas id="das-canvas" width="1200" height="420" aria-label="DAS activity overview heatmap"></canvas>
+            <p id="das-caption" class="panel-caption">Waiting for DAS activity context layer...</p>
+          </div>
+        </article>
+
+        <aside class="panel panel-sidebar" aria-labelledby="meta-heading">
+          <h2 id="meta-heading">Shot & Event Summary</h2>
+          <dl class="meta-list">
+            <div>
+              <dt>Selected shot</dt>
+              <dd id="meta-shot">-</dd>
+            </div>
+            <div>
+              <dt>Available time range</dt>
+              <dd id="meta-time-range">-</dd>
+            </div>
+            <div>
+              <dt>Recommended interval</dt>
+              <dd id="meta-recommended">-</dd>
+            </div>
+            <div>
+              <dt>Current interval</dt>
+              <dd id="meta-current-interval">-</dd>
+            </div>
+            <div>
+              <dt>Event count</dt>
+              <dd id="meta-event-count">-</dd>
+            </div>
+            <div>
+              <dt>Active event</dt>
+              <dd id="meta-active-event">None</dd>
+            </div>
+            <div>
+              <dt>Source ground truth</dt>
+              <dd id="meta-ground-truth">-</dd>
+            </div>
+            <div>
+              <dt>Event navigation</dt>
+              <dd>
+                <div id="event-nav" class="event-nav"></div>
+              </dd>
+            </div>
+          </dl>
+          <p id="data-status" class="data-status">
+            Loading viewer metadata...
+          </p>
+        </aside>
+      </section>
   </main>
 
   <div id="hover-tooltip" class="hover-tooltip" aria-hidden="true"></div>
