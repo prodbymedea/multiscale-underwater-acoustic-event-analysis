@@ -94,8 +94,19 @@ const el = {
   mapSummaryInterval: document.getElementById("map-summary-interval"),
   mapSummaryChannel: document.getElementById("map-summary-channel"),
   mapSummaryDistance: document.getElementById("map-summary-distance"),
+  mapSummaryBand: document.getElementById("map-summary-band"),
   mapSummarySource: document.getElementById("map-summary-source"),
   mapSummaryHint: document.getElementById("map-summary-hint"),
+  mapSnapEvent: document.getElementById("map-snap-event"),
+  mapSnapDepth: document.getElementById("map-snap-depth"),
+  mapSnapSourceX: document.getElementById("map-snap-source-x"),
+  mapSnapSourceY: document.getElementById("map-snap-source-y"),
+  mapSnapTracks: document.getElementById("map-snap-tracks"),
+  mapSnapRecorders: document.getElementById("map-snap-recorders"),
+  mapSnapMode: document.getElementById("map-snap-mode"),
+  mapLegendPanel: document.getElementById("map-legend-panel"),
+  mapChannelChipsWrap: document.getElementById("map-channel-chips-wrap"),
+  mapChannelChips: document.getElementById("map-channel-chips"),
   mapZoomIn: document.getElementById("map-zoom-in"),
   mapZoomOut: document.getElementById("map-zoom-out"),
   mapView: document.getElementById("map-view"),
@@ -264,7 +275,7 @@ function summarizeError(error) {
 function showTooltip(title, body, clientX, clientY) {
   const tip = el.hoverTooltip;
   tip.innerHTML = `<div class="title">${title}</div><p class="body">${body}</p>`;
-  tip.classList.toggle("tooltip-selected-channel", title === "Selected DAS channel");
+  tip.classList.toggle("tooltip-source", String(title || "").toLowerCase().includes("source"));
   tip.classList.add("visible");
   tip.setAttribute("aria-hidden", "false");
 
@@ -922,9 +933,10 @@ function syncMapTimelineControls() {
   }
   if (el.mapTimeNote) {
     el.mapTimeNote.textContent = state.mapTimeline.mode === "full"
-      ? "Full map mode keeps the complete spatial context visible. Switch to time-filtered map to explore the situation timeline independently from DAS/hydro controls."
-      : "Time-filtered map uses the situation/track timeline only. It remains independent from DAS/hydro interval controls.";
+      ? ""
+      : "Situation timeline only";
   }
+  updateMapSnapshotPanel();
 }
 
 function resetMapTimelineForShot() {
@@ -1077,7 +1089,8 @@ function getSelectedChannelSummary() {
   if (!sc?.available) {
     return {
       channel: "Unavailable",
-      distance: "-"
+      distance: "-",
+      band: "-"
     };
   }
 
@@ -1096,12 +1109,52 @@ function getSelectedChannelSummary() {
 
   return {
     channel: parts.length ? parts.join(" / ") : (sc.meta?.selected_channel_label || "Loaded"),
-    distance: Number.isFinite(distance) ? `${distance.toFixed(1)} m` : "-"
+    distance: Number.isFinite(distance) ? `${distance.toFixed(1)} m along cable` : "-",
+    band: Array.isArray(sc.band?.bandHz) && Number.isFinite(sc.band.bandHz[0]) && Number.isFinite(sc.band.bandHz[1])
+      ? `${sc.band.bandHz[0].toFixed(0)}-${sc.band.bandHz[1].toFixed(0)} Hz`
+      : "-"
   };
 }
 
+function renderMapChannelChips(sc) {
+  if (!el.mapChannelChipsWrap || !el.mapChannelChips) {
+    return;
+  }
+  el.mapChannelChips.innerHTML = "";
+  if (!sc?.available || !sc.multiChannel || !sc.entryByCol) {
+    el.mapChannelChipsWrap.hidden = true;
+    return;
+  }
+
+  const channels = Object.values(sc.entryByCol)
+    .filter((entry) => Number.isFinite(Number(entry?.preview_col)))
+    .sort((a, b) => Number(a.preview_col) - Number(b.preview_col));
+  if (!channels.length) {
+    el.mapChannelChipsWrap.hidden = true;
+    return;
+  }
+
+  channels.forEach((entry) => {
+    const previewCol = Number(entry.preview_col);
+    const raw = Number(entry.raw_das_channel_index);
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "map-channel-chip";
+    chip.setAttribute("role", "listitem");
+    chip.textContent = Number.isFinite(raw) ? `p${previewCol} / ${raw}` : `p${previewCol}`;
+    if (Number(sc.activePreviewCol) === previewCol) {
+      chip.classList.add("active");
+    }
+    chip.addEventListener("click", () => {
+      void switchSelectedChannelToPreviewCol(previewCol);
+    });
+    el.mapChannelChips.appendChild(chip);
+  });
+  el.mapChannelChipsWrap.hidden = false;
+}
+
 function updateMapShotSummary() {
-  if (!el.mapSummaryShot) {
+  if (!el.mapSummaryChannel || !el.mapSummaryDistance || !el.mapSummaryHint) {
     return;
   }
 
@@ -1111,15 +1164,53 @@ function updateMapShotSummary() {
   const selectedChannel = getSelectedChannelSummary();
   const sc = state.shotBundle?.selectedChannel;
 
-  el.mapSummaryShot.textContent = shotId;
-  el.mapSummaryEvents.textContent = Number.isFinite(state.eventCount) ? String(state.eventCount) : "Unknown";
-  el.mapSummaryInterval.textContent = `${formatSeconds(interval.start)} to ${formatSeconds(interval.end)}`;
+if (el.mapSummaryShot) {
+    el.mapSummaryShot.textContent = shotId;
+  }
+  if (el.mapSummaryEvents) {
+    const intervalEventCount = getEventsForInterval(interval).length;
+    const totalEventCount = getEventList().length;
+    el.mapSummaryEvents.textContent = Number.isFinite(totalEventCount)
+      ? `${intervalEventCount}/${totalEventCount} in interval`
+      : "Events unknown";
+  }
+  if (el.mapSummaryInterval) {
+    el.mapSummaryInterval.textContent = `${formatSeconds(interval.start)} - ${formatSeconds(interval.end)}`;
+  }
   el.mapSummaryChannel.textContent = selectedChannel.channel;
   el.mapSummaryDistance.textContent = selectedChannel.distance;
-  el.mapSummarySource.textContent = sourceGt.available ? "Available" : "Not available";
+  if (el.mapSummaryBand) {
+    el.mapSummaryBand.textContent = selectedChannel.band;
+  }
+  if (el.mapSummarySource) {
+    el.mapSummarySource.textContent = sourceGt.available ? "Source available" : "No source";
+  }
   el.mapSummaryHint.textContent = sc?.available && sc.multiChannel
-    ? "Click fiber to select nearest exported channel."
+    ? "Choose an exported DAS channel."
     : "Selected-channel export is fixed for this shot.";
+  renderMapChannelChips(sc);
+}
+
+function updateMapSnapshotPanel() {
+  if (!el.mapSnapEvent) {
+    return;
+  }
+  const source = getSourceGroundTruth();
+  const tracks = state.shotBundle?.situation?.boat_tracks?.tracks || {};
+  const recorders = state.shotBundle?.recordersSummary || {};
+  const trackCount = Object.values(tracks).filter((pts) => Array.isArray(pts) && pts.length > 1).length;
+  const recorderCount = Object.keys(recorders).length;
+  const mapTime = state.mapTimeline.mode === "time"
+    ? formatSeconds(Number(state.mapTimeline.time || 0))
+    : "Full extent";
+
+  el.mapSnapEvent.textContent = mapTime;
+  el.mapSnapDepth.textContent = source.available && Number.isFinite(source.depth) ? `${source.depth.toFixed(1)} m` : "-";
+  el.mapSnapSourceX.textContent = source.available && Number.isFinite(source.x) && Number.isFinite(source.y)
+    ? `${source.x.toFixed(1)} / ${source.y.toFixed(1)}`
+    : "-";
+  el.mapSnapTracks.textContent = String(trackCount);
+  el.mapSnapRecorders.textContent = String(recorderCount);
 }
 
 function updatePlaybackLabel() {
@@ -1165,15 +1256,23 @@ function renderActiveEventLabel() {
 function getSourceGroundTruth() {
   const manifestSource = state.selectedManifest?.source_ground_truth;
   if (manifestSource?.available) {
-    const x = Number(manifestSource.position_xy_m?.[0]);
-    const y = Number(manifestSource.position_xy_m?.[1]);
+    const x = Number(
+      manifestSource.position_xy_m?.[0] ??
+      manifestSource.x
+    );
+    const y = Number(
+      manifestSource.position_xy_m?.[1] ??
+      manifestSource.y
+    );
     const depth = Number(manifestSource.depth_m);
-    return {
-      available: true,
-      x,
-      y,
-      depth
-    };
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      return {
+        available: true,
+        x,
+        y,
+        depth
+      };
+    }
   }
 
   const source = state.shotBundle?.shotMetadata?.source;
@@ -1454,22 +1553,18 @@ function buildSituationPoints(recorders, sourcePoint, xScale, yScale) {
   if (sourcePoint) {
     const cx = xScale(sourcePoint.x);
     const cy = yScale(sourcePoint.y);
-    const star = [
-      [cx, cy - 12],
-      [cx + 3.1, cy - 4.1],
-      [cx + 11.5, cy - 4.1],
-      [cx + 4.7, cy + 1.4],
-      [cx + 7.2, cy + 9.8],
-      [cx, cy + 4.8],
-      [cx - 7.2, cy + 9.8],
-      [cx - 4.7, cy + 1.4],
-      [cx - 11.5, cy - 4.1],
-      [cx - 3.1, cy - 4.1]
-    ].map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
-    parts.push(`<circle cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="18" fill="rgba(255,122,89,0.2)"></circle>`);
-    parts.push(`<polygon class="map-interactive-point map-point-source" points="${star}" fill="#ff7a59" stroke="rgba(255,244,224,0.96)" stroke-width="1.7" data-tooltip-title="Signal source" data-tooltip-body="Type: acoustic playback source<br>Coordinates (E, N): ${sourcePoint.x.toFixed(1)} m, ${sourcePoint.y.toFixed(1)} m${Number.isFinite(sourcePoint.depth) ? `<br>Depth: ${sourcePoint.depth.toFixed(1)} m` : ""}"></polygon>`);
-    // Small label placed to the right/above the marker for clarity
-    parts.push(`<text class="map-point-source-label" x="${(cx + 14).toFixed(2)}" y="${(cy - 6).toFixed(2)}" fill="#ffd9c6" font-size="11" font-family="sans-serif">Source</text>`);
+    const sourceName = state.selectedShotId === "whales_orca"
+      ? "Orca"
+      : (state.selectedShotId === "whales_humpback" ? "Humpback" : "Source");
+    const diamond = [
+      `${cx.toFixed(2)},${(cy - 8).toFixed(2)}`,
+      `${(cx + 8).toFixed(2)},${cy.toFixed(2)}`,
+      `${cx.toFixed(2)},${(cy + 8).toFixed(2)}`,
+      `${(cx - 8).toFixed(2)},${cy.toFixed(2)}`
+    ].join(" ");
+    parts.push(`<circle class="map-point-source-glow" cx="${cx.toFixed(2)}" cy="${cy.toFixed(2)}" r="12.2" fill="rgba(255,122,89,0.18)"></circle>`);
+    parts.push(`<polygon class="map-interactive-point map-point-source" points="${diamond}" fill="#ff7a59" stroke="rgba(255,244,224,0.96)" stroke-width="1.7" data-tooltip-title="${sourceName} source" data-tooltip-body="Type: acoustic playback source<br>Label: ${sourceName}<br>Coordinates (E, N): ${sourcePoint.x.toFixed(1)} m, ${sourcePoint.y.toFixed(1)} m${Number.isFinite(sourcePoint.depth) ? `<br>Depth: ${sourcePoint.depth.toFixed(1)} m` : ""}"></polygon>`);
+    parts.push(`<text class="map-point-source-label" x="${(cx + 14).toFixed(2)}" y="${(cy - 6).toFixed(2)}" fill="#ffd9c6" font-size="11" font-family="sans-serif">${sourceName}</text>`);
   }
 
   return parts.join("");
@@ -1531,8 +1626,9 @@ function buildLegend(tracks, palette, legendX, legendY, includeFiber = true) {
   const names = Object.keys(tracks || {});
   const items = includeFiber ? [{ name: "Fiber", color: "#ff4fd8" }] : [];
   names.slice(0, 5).forEach((name, idx) => items.push({ name, color: palette[idx % palette.length] }));
-  const legendW = 170;
-  const legendH = Math.max(52, 24 + items.length * 18);
+  const legendW = 184;
+  const markerRows = 2;
+  const legendH = Math.max(74, 24 + items.length * 18 + 18 + markerRows * 16);
 
   const parts = [
     `<rect x="${legendX.toFixed(1)}" y="${legendY.toFixed(1)}" width="${legendW}" height="${legendH}" rx="12" fill="rgba(11,23,43,0.86)" stroke="rgba(114,246,255,0.24)"></rect>`,
@@ -1545,7 +1641,48 @@ function buildLegend(tracks, palette, legendX, legendY, includeFiber = true) {
     parts.push(`<text x="${(legendX + 42).toFixed(1)}" y="${(y + 4).toFixed(1)}" fill="#d4e3ff" font-size="11">${item.name}</text>`);
   });
 
+  const markerHeadY = legendY + 24 + items.length * 18 + 6;
+  parts.push(`<text x="${(legendX + 10).toFixed(1)}" y="${markerHeadY.toFixed(1)}" fill="#9fb3d9" font-size="11">Markers</text>`);
+  const sourceLegendName = state.selectedShotId === "whales_orca"
+    ? "Orca"
+    : (state.selectedShotId === "whales_humpback" ? "Humpback" : "Source");
+  const sourceY = markerHeadY + 12;
+  parts.push(`<polygon points="${(legendX + 18).toFixed(1)},${(sourceY - 5).toFixed(1)} ${(legendX + 23).toFixed(1)},${sourceY.toFixed(1)} ${(legendX + 18).toFixed(1)},${(sourceY + 5).toFixed(1)} ${(legendX + 13).toFixed(1)},${sourceY.toFixed(1)}" fill="#ff7a59" stroke="#ffd9c6" stroke-width="1"></polygon>`);
+  parts.push(`<text x="${(legendX + 42).toFixed(1)}" y="${(sourceY + 4).toFixed(1)}" fill="#d4e3ff" font-size="11">${sourceLegendName}</text>`);
+  const selectedY = sourceY + 16;
+  parts.push(`<circle cx="${(legendX + 18).toFixed(1)}" cy="${selectedY.toFixed(1)}" r="5.2" fill="none" stroke="#ff6f7f" stroke-width="1.8"></circle>`);
+  parts.push(`<circle cx="${(legendX + 18).toFixed(1)}" cy="${selectedY.toFixed(1)}" r="2.3" fill="#ff6f7f"></circle>`);
+  parts.push(`<text x="${(legendX + 42).toFixed(1)}" y="${(selectedY + 4).toFixed(1)}" fill="#d4e3ff" font-size="11">Selected channel</text>`);
+
   return parts.join("");
+}
+
+function renderMapLegendPanel(tracks, includeFiber = true, includePoints = true) {
+  if (!el.mapLegendPanel) {
+    return;
+  }
+  const names = Object.keys(tracks || {});
+  const items = includeFiber ? [{ name: "Fiber", color: "#ff4fd8" }] : [];
+  names.slice(0, 5).forEach((name, idx) => items.push({ name, color: TRACK_PALETTE[idx % TRACK_PALETTE.length] }));
+  const sourceLegendName = state.selectedShotId === "whales_orca"
+    ? "Orca"
+    : (state.selectedShotId === "whales_humpback" ? "Humpback" : "Source");
+
+  const layerHtml = items.map((item) => (
+    `<div class="map-legend-row"><span class="map-legend-swatch" style="background:${item.color};"></span><span>${item.name}</span></div>`
+  )).join("");
+ const markerHtml = includePoints
+    ? [
+      `<div class="map-legend-row"><span class="map-legend-diamond"></span><span>${sourceLegendName}</span></div>`,
+      `<div class="map-legend-row"><span class="map-legend-selected"><span></span></span><span>Selected channel</span></div>`
+    ].join("")
+    : "";
+  el.mapLegendPanel.innerHTML = `
+    <div class="map-legend-title">Map layers</div>
+    ${layerHtml}
+    <div class="map-legend-title map-legend-title-markers">Markers</div>
+    ${markerHtml}
+  `;
 }
 
 function renderMapPanel() {
@@ -1559,7 +1696,7 @@ function renderMapPanel() {
   const width = Math.max(640, Math.floor(el.mapSvg.clientWidth || 1200));
   const height = Math.max(420, Math.floor(el.mapSvg.clientHeight || 560));
   const pad = { l: 48, r: 48, t: 26, b: 28 };
-  const legendReserve = 194;
+  const legendReserve = 28;
   const plotW = Math.max(120, width - pad.l - pad.r - legendReserve);
   const plotH = Math.max(120, height - pad.t - pad.b);
 
@@ -1880,7 +2017,7 @@ function renderMapPanel() {
   const sc = state.shotBundle?.selectedChannel;
   // Prepare selected-channel marker parts but do not push them yet so they render on top of other layers.
   let _selectedChannelParts = null;
-  if (fiberSelection && sc?.available && sc.multiChannel && Number.isFinite(sc.activePreviewCol)) {
+  if (showPoints && fiberSelection && sc?.available && sc.multiChannel && Number.isFinite(sc.activePreviewCol)) {
     const entry = sc.entryByCol?.[String(sc.activePreviewCol)];
     const stats = getSelectedChannelsDistanceStats(sc);
     const activeDistance = Number(entry?.distance_m);
@@ -1893,9 +2030,9 @@ function renderMapPanel() {
         const body = `Type: Selected-channel marker<br>Preview col: ${entry.preview_col}<br>Raw channel: ${entry.raw_das_channel_index}<br>Distance: ${activeDistance.toFixed(1)} m`;
         _selectedChannelParts = [];
         // soft active hotspot with a subtle pulse
-        _selectedChannelParts.push(`<circle class="map-point-selected-channel-glow" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="18" fill="rgba(255,107,129,0.16)"></circle>`);
-        _selectedChannelParts.push(`<circle class="map-point-selected-channel-ring" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="11.6" fill="none" stroke="#ff6b81" stroke-width="2.8"></circle>`);
-        _selectedChannelParts.push(`<circle class="map-point-selected-channel-center" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="5.4" fill="#ff7b8f" stroke="rgba(255,255,255,0.22)" stroke-width="0.8"></circle>`);
+        _selectedChannelParts.push(`<circle class="map-point-selected-channel-glow" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="17.2" fill="rgba(255,111,127,0.16)"></circle>`);
+        _selectedChannelParts.push(`<circle class="map-point-selected-channel-ring" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="11.4" fill="none" stroke="#ff6f7f" stroke-width="2.5"></circle>`);
+        _selectedChannelParts.push(`<circle class="map-point-selected-channel-center" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="4.7" fill="#ff6f7f" stroke="rgba(255,214,221,0.42)" stroke-width="0.7"></circle>`);
         // invisible hit area keeps tooltip easy to trigger without adding visual weight
         _selectedChannelParts.push(`<circle class="map-interactive-point map-point-selected-channel" cx="${mx.toFixed(2)}" cy="${my.toFixed(2)}" r="7.6" fill="rgba(255,255,255,0.001)" data-tooltip-title="Selected DAS channel" data-tooltip-body="${body}"></circle>`);
       }
@@ -1931,16 +2068,15 @@ function renderMapPanel() {
     }
   }
 
-  if (showTracks && mapTimelineMode === "full") {
+  if (showTracks && showPoints && mapTimelineMode === "full") {
     mapParts.push(buildTrackPointMarkers(boatTracks || {}, xScale, yScale));
   }
 
   const points = showPoints ? buildSituationPoints(recorders, sourcePoint, xScale, yScale) : "";
-  const overlays = mapTimelineMode === "time" ? buildMapTimeOverlays(showTracks ? (boatTracks || {}) : {}, xScale, yScale, mapTimelineTime) : "";
-  const legendX = pad.l + plotW + 12;
-  const legendY = pad.t + 12;
-  el.mapView?.style.setProperty("--map-legend-right", `${legendX + 170}px`);
-  const legend = buildLegend(showTracks ? (boatTracks || {}) : {}, TRACK_PALETTE, legendX, legendY, showFiber);
+const overlays = (mapTimelineMode === "time" && showPoints)
+    ? buildMapTimeOverlays(showTracks ? (boatTracks || {}) : {}, xScale, yScale, mapTimelineTime)
+    : "";
+  renderMapLegendPanel(showTracks ? (boatTracks || {}) : {}, showFiber, showPoints);
 
   // Render points (recorders, source) and overlays first
   mapParts.push(points);
@@ -1950,7 +2086,6 @@ function renderMapPanel() {
     for (const p of _selectedChannelParts) mapParts.push(p);
   }
   parts.push(`<g clip-path="url(#${clipId})">${mapParts.join("")}</g>`);
-  parts.push(legend);
 
   state.geometry.map = {
     pad,
@@ -1968,9 +2103,6 @@ function renderMapPanel() {
   };
 
   el.mapSvg.innerHTML = parts.join("");
-  el.mapCaption.textContent = mapTimelineMode === "full"
-    ? "Full map mode shows the entire spatial context, including all bathymetry and track history. Switch to time-filtered mode for an independent situation timeline."
-    : `Time-filtered map at ${mapTimelineTime.toFixed(2)} s uses the situation/track timeline only.`;
   attachMapHoverHandlers();
   syncMapTimelineControls();
 }
@@ -2821,9 +2953,6 @@ function renderSelectedChannelPanel() {
     ctx.lineTo(cursorXB, pad.top + plotH);
     ctx.stroke();
 
-    ctx.fillStyle = "#9fb3d9";
-    ctx.font = "11px Space Grotesk";
-    ctx.fillText(`${interval.start.toFixed(2)} s`, pad.left, height - 4);
   }
 
   function drawWave() {
@@ -2914,6 +3043,7 @@ function renderAllPanels() {
   renderSelectedChannelPanel();
   renderEventNavigation();
   updateMapShotSummary();
+  updateMapSnapshotPanel();
 }
 
 function applyIntervalSelection(statusMessage = null) {
