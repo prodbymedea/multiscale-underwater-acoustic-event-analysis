@@ -2,8 +2,9 @@
 """
 Build compact selected-channel DAS bundles for the frontend (no HDF5 at runtime).
 
-Stage 2 (default): whales_orca exports preview columns 189, 12, and 50 — per-column NPZs plus
-`selected_channels_index.json`; legacy `selected_channel_*.npz` duplicates the default column (189).
+Stage 2 (default): whales_orca exports fixed preview columns (189, 12, 50, extras) plus
+nearest-grid resolves for NCC hotspot raw anchors (859, 861, 862, 920) and `selected_channels_index.json`;
+legacy `selected_channel_*.npz` duplicates the default preview column (172 when present).
 
 Outputs (under output/shots/<shot>/):
   - selected_channels_index.json — maps preview_col → NPZ filenames
@@ -47,9 +48,11 @@ SHOT_SPECS: dict[str, tuple[str, str]] = {
 ORCA_STAGE2_PREVIEW_COLS: list[int] = [189, 12, 50]
 ORCA_STAGE2_DEFAULT_PREVIEW_COL = 172
 ORCA_STAGE2_EXTRA_PREVIEW_COLS: list[int] = [26, 146]
-# Supervisor test request: add raw DAS ch 861 if feasible. Since viewer exports use preview columns,
-# map this raw target to the nearest available preview raw channel.
-ORCA_STAGE2_TEST_RAW_CHANNELS: list[int] = [861]
+# Raw DAS indices → nearest exportable preview column (see docs/orca_ncc_summary.md).
+# Zone ~854–868: 859–862 (860 already typical default via col 172; include neighbors for distinct grids).
+# Zone ~908–925: 920 (NCC rank-6 peak; second hotspot representative).
+# 861 retained (supervisor / nearest-preview test). Order: resolve in list order; duplicate preview cols skipped.
+ORCA_STAGE2_RAW_RESOLVE_TARGETS: list[int] = [859, 861, 862, 920]
 HUMPBACK_STAGE2_MAX_CHANNELS = 3
 HUMPBACK_STAGE2_MIN_COL_GAP = 20
 HUMPBACK_STAGE2_EXTRA_PREVIEW_COLS: list[int] = [20, 154]
@@ -228,23 +231,21 @@ def _rank_humpback_preview_cols(shot_dir: Path) -> list[int]:
         return [118]
 
 
-def _resolve_preview_cols_for_raw_targets(channel_indices: np.ndarray, raw_targets: list[int]) -> list[int]:
-    out: list[int] = []
+def _preview_col_for_raw_channel(channel_indices: np.ndarray, raw: int) -> int:
+    """Preview grid index (position in channel_indices) for exact raw match or nearest neighbor."""
     if channel_indices.ndim != 1 or channel_indices.size == 0:
-        return out
-    for raw in raw_targets:
-        idx_exact = np.where(channel_indices == int(raw))[0]
-        if idx_exact.size > 0:
-            out.append(int(idx_exact[0]))
-            continue
-        nearest = int(np.argmin(np.abs(channel_indices - int(raw))))
-        out.append(nearest)
-    # unique preserve order
-    dedup: list[int] = []
-    for c in out:
-        if c not in dedup:
-            dedup.append(c)
-    return dedup
+        return 0
+    idx_exact = np.where(channel_indices == int(raw))[0]
+    if idx_exact.size > 0:
+        return int(idx_exact[0])
+    return int(np.argmin(np.abs(channel_indices - int(raw))))
+
+
+def _orca_raw_targets_as_preview_pairs(
+    channel_indices: np.ndarray, raw_targets: list[int]
+) -> list[tuple[int, int]]:
+    """(requested_raw, preview_col) per target. Preview col may repeat; caller skips duplicate columns."""
+    return [(int(r), _preview_col_for_raw_channel(channel_indices, int(r))) for r in raw_targets]
 
 
 def _shot_rel(shot_dir: Path, path: Path) -> str:
@@ -588,8 +589,8 @@ def main() -> None:
             for c in ORCA_STAGE2_EXTRA_PREVIEW_COLS:
                 if c not in preview_cols:
                     preview_cols.append(c)
-            # Add supervisor test raw channels by nearest preview mapping.
-            orca_extra_target_cols = list(ORCA_STAGE2_TEST_RAW_CHANNELS)
+            # NCC / supervisor raw anchors → nearest preview columns (see ORCA_STAGE2_RAW_RESOLVE_TARGETS).
+            orca_extra_target_cols = list(ORCA_STAGE2_RAW_RESOLVE_TARGETS)
         if ORCA_STAGE2_DEFAULT_PREVIEW_COL in preview_cols:
             default_preview_col = ORCA_STAGE2_DEFAULT_PREVIEW_COL
         elif def_col in preview_cols:
@@ -617,8 +618,8 @@ def main() -> None:
     channel_indices = np.asarray(z["channel_indices"], dtype=np.int64)
     distances_m = np.asarray(z["distances_m"], dtype=np.float64)
     if shot_id == "whales_orca" and orca_extra_target_cols:
-        mapped = _resolve_preview_cols_for_raw_targets(channel_indices, orca_extra_target_cols)
-        for raw_target, c in zip(orca_extra_target_cols, mapped):
+        pairs = _orca_raw_targets_as_preview_pairs(channel_indices, orca_extra_target_cols)
+        for raw_target, c in pairs:
             orca_requested_raw_by_col[int(c)] = int(raw_target)
             if c not in preview_cols:
                 preview_cols.append(c)
@@ -718,6 +719,7 @@ def main() -> None:
             "notes": [
                 "Maps preview_column to per-channel NPZ triples for selected-channel Stage-2 viewer.",
                 "Legacy filenames selected_channel_*.npz duplicate the default_preview_col exports.",
+                "Orca includes NCC-guided raw resolve targets (859, 861, 862, 920) → nearest preview grid; see docs/orca_ncc_summary.md.",
             ],
         }
         index_path = shot_dir / "selected_channels_index.json"

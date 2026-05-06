@@ -44,6 +44,7 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 | `src/inspect_orca_channels.py` | Orca-only single-channel diagnostics vs activity map |
 | `src/test_orca_bandpass_baseline.py` | Orca native-rate DAS band-pass envelope baseline (diagnostic figures + `orca_bandpass_summary.json`) |
 | `src/build_selected_channel_bundle.py` | Stage 1: compact single-channel NPZ bundle + `selected_channel_bundle.json` for frontend (no HDF5) |
+| `src/summarize_orca_ncc_band.py` | Orca 2000–2490 Hz teacher NCC `.npy` → compact JSON + optional figure + markdown (per-channel max \|NCC\|, hotspot zones; no frontend) |
 
 ## Notes on data
 

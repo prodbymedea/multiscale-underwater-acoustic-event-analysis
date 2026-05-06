@@ -27,7 +27,7 @@ The same selected interval (`start` / `end`) now drives all three panels:
 	- falls back to metadata-only mode when spatial coordinates are unavailable.
 - Selected-channel DAS panel:
 	- loads `selected_channels_index.json` when present (multiple preview columns), otherwise the legacy single triple `selected_channel_*.npz`,
-	- shows spectrogram, band-pass **support** score (with threshold and optional mask), and waveform; **Preview column** dropdown appears for multi-channel shots (current Orca set includes an additional test option mapped nearest to requested raw ch 861),
+	- shows spectrogram, band-pass **support** score (with threshold and optional mask), and waveform; **Preview column** dropdown appears for multi-channel shots (Orca exports resolve NCC-related raw anchors including **~920** (second hotspot) and **859–862** neighborhood plus **861** / default **~860**; exact mapping is in `selected_channels_index.json` after `build_selected_channel_bundle.py`),
 	- for single-channel shots, it loads the default selected channel without showing a selector.
 	- shot-specific display-only spectrogram enhancements improve readability while preserving interaction behavior:
 		- Orca: 1500–2500 Hz focus + robust clipping + stronger per-frequency background suppression
