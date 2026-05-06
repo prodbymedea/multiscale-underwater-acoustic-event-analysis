@@ -3,19 +3,18 @@
 ## Current status
 This document describes the **current baseline event definition** used in the project.
 
-It should not be treated as the final conceptual definition of an event. The current implementation is a practical starting point for MVP exploration and will evolve toward a score-based and more DAS-centered representation.
+Events are **candidate intervals** for exploration and navigation. They are **not** presented as reliable, cable-wide ground truth for whale presence on DAS, and they do not substitute for **selected-channel** interpretation where whale-related response is **sparse** and channel-limited.
 
 ## Current baseline philosophy
 At the current stage, candidate event timing is derived primarily from **hydrophone spectrogram activity**.
 
-This choice was made because hydrophone spectrograms currently provide the most stable and interpretable baseline for identifying interesting time intervals in the selected dataset.
+This choice was made because hydrophone spectrograms provide a relatively stable way to flag **intervals of increased acoustic energy** in the selected recordings—useful for **when** to look, not a full statement of **what** happened on every DAS channel.
 
-However, the long-term focus of the project is **DAS-centered visualization**, not hydrophone-only detection. Hydrophone data are therefore treated mainly as:
-- a reference timing source,
-- a supporting signal for interpretation,
-- and a synchronized secondary view.
+The project remains **DAS-centered** in the sense that thesis value lies in visualizing and interpreting DAS together with context—but **interpretation of whale-related structure on DAS** must emphasize:
 
-DAS should remain the main visual modality of the project.
+- **selected-channel** and band-focused views (especially for Orca-class data),
+- **support layers** (hydrophone score, optional DAS band-pass **support** on the selected trace),
+- and explicit limits on **localization** and cable-wide inference.
 
 ## Current baseline score
 The current baseline detector uses the exported hydrophone spectrogram (`spectrogram.json`) and computes a frame-wise score.
@@ -34,7 +33,7 @@ Other feature definitions may later be explored, including:
 - alternative band-based energy measures,
 - weighted frequency aggregation,
 - MFCC-based features,
-- or combined DAS + hydrophone evidence.
+- or cautious use of **selected-channel** DAS features as **support** (not automatic whale labels).
 
 ## Thresholding
 The current detector uses a robust threshold:
@@ -43,9 +42,7 @@ threshold = median(scores) + k × 1.4826 × MAD(scores)
 
 with default k = 3.
 
-This threshold is currently used to convert a continuous score into candidate event intervals.
-
-At the same time, the project should move beyond purely threshold-based interpretation. In future iterations, the continuous score itself should also be visualized and used as an interpretable layer, rather than only showing thresholded event intervals.
+This threshold converts a continuous score into candidate event intervals for **navigation**. The continuous score should remain visible as a **support** trace; thresholding should not be read as definitive biological detection.
 
 ## Event formation
 The current baseline event formation is:
@@ -57,133 +54,87 @@ The current baseline event formation is:
 This produces candidate event intervals for navigation and exploration.
 
 ## Binary event vs score-based representation
-The project should distinguish between two related but different concepts:
+The project distinguishes between:
 
 ### 1. Event interval
-A binary interval is still useful because it allows:
+A binary interval is useful for:
 - event listing,
 - navigation,
 - jumping to interesting time regions,
 - and summarizing a shot.
 
-### 2. Event score / confidence over time
-A continuous score is more useful for interpretation because it shows:
-- how strong the event evidence is,
+Intervals are **candidates**, not validated whale annotations on DAS.
+
+### 2. Event score / activity over time
+A continuous score is useful because it shows:
+- how strong the hydrophone **activity** evidence is,
 - how it changes over time,
 - and where thresholding may hide gradual transitions.
 
-For this reason, the recommended direction is to keep **binary intervals for navigation**, but also expose a **continuous score or confidence-like representation**.
-
-At the current stage, it is safer to describe this value as:
+Describe this value as:
 - activity score,
-- detection score,
-- or confidence-like score,
+- hydrophone **support** score,
+- or detection **score**,
 
-rather than a strict calibrated probability.
-
-If later the score is normalized into a bounded range such as 0–1, it can be presented in the interface as a whale-call confidence-like value, but that would still require careful interpretation.
+rather than a strict calibrated whale probability.
 
 ## Role of hydrophone
-Hydrophone data should remain in the project, but mainly as:
+Hydrophone data should remain in the project as:
 - a reference timing source,
-- a support signal for event interpretation,
-- and a synchronized secondary view.
+- a **support layer** for event interpretation and navigation,
+- and a synchronized view that often **contrasts** with weak or absent DAS response on many channels.
 
-Hydrophone-based scoring is useful because it is currently the most stable and interpretable baseline for identifying interesting intervals.
+## Role of DAS (heatmap vs selected channel)
+**Aggregated DAS activity (heatmap)** is a **context layer**: it helps visualize coarse structure along the cable over time under preprocessing choices. It should **not** be oversold as a precise event detector or as evidence of uniform acoustic coupling along the full array.
 
-However, hydrophone data should not become the main focus of the whole project.
+**Selected-channel inspection** is the primary interpretive path for relating **sparse** whale-related evidence to the fiber:
 
-## Role of DAS
-DAS is the central visual modality of the project.
+- **Orca:** stronger, more localized response on a **narrow subset** of channels; band-limited / spectrogram views are central.
+- **Humpback:** in current DAS data, response tends to be **weaker and noisier**; claims stay **support-level** and tentative.
 
-At the moment, DAS is not yet used as the primary baseline detector. Instead, it is used as a supporting view linked to detected time intervals.
-
-This should evolve further. In the intended MVP direction, DAS should not only show raw amplitude, but also a more interpretable representation such as:
-- normalized DAS activity score,
-- rolling DAS intensity,
-- channel-wise activity map,
-- or confidence-like DAS heatmap.
-
-The purpose is to show how event-related activity appears and evolves along the cable over time.
+DAS is **not** used as a standalone, validated baseline detector for whale events across the whole cable.
 
 ## Combined hydrophone and DAS evidence
-The long-term direction of the project should be to combine **hydrophone and DAS evidence** rather than relying on hydrophone alone.
+A realistic approach for this dataset is:
 
-This does not necessarily mean a hard joint detector in the first MVP. A more realistic immediate approach is:
+- use hydrophone as the baseline **timing/support** layer,
+- use **selected-channel** DAS (and optional band-pass **support** score) as **localized** visual evidence,
+- use the **heatmap** as **secondary** cable-wide context,
+- avoid implying a single joint probability that merges modalities without a justified model.
 
-- use hydrophone as the baseline timing and support layer,
-- use DAS as the main visual evidence layer,
-- and later move toward a combined event confidence based on both modalities.
-
-This is important because an event may be visible on the hydrophone signal but weak or absent on DAS channels, or vice versa. Such differences are themselves informative and should not be hidden.
+Disagreement between hydrophone activity and DAS response on many channels is **expected** given sensitivity limits and is analytically meaningful.
 
 ## Linking detection score to DAS view
-At the current stage, the project does not use a single combined detection formula that merges hydrophone and DAS into one final probability value. Instead, the connection between detection score and DAS view is defined through **synchronized interpretation**.
+The project does not rely on one combined formula that merges hydrophone and full-cable DAS into a final whale probability. The connection is **synchronized interpretation** in the viewer.
 
 ### Hydrophone score
 The hydrophone-derived score is used as:
 - a time-based guidance signal,
-- a support score over time,
-- and a practical way to identify intervals of increased acoustic activity.
+- a **support** score over time,
+- and a practical way to identify intervals of increased acoustic activity on the recorder.
 
-This score helps indicate **when** an event-like interval is likely to occur.
-
-### DAS view
-The DAS view is used as the **main visual layer** of the project.
-
-Its role is to show:
-- how activity appears along the cable,
-- how it evolves over time,
-- and how different parts of the fiber respond during the selected interval.
-
-This view helps indicate **where and how** the event-related activity is visible in DAS.
+### DAS views
+- **Heatmap:** **context** for **where** preprocessing shows elevated activity along the cable—not a uniform whale detector.
+- **Selected-channel:** primary place to ask whether sparse, band-limited structure is consistent with biological or environmental hypotheses.
 
 ### Relationship between the two
-The hydrophone score and the DAS view are linked through **shared time alignment**.
+Linked through **shared time alignment** and shared interval/cursor: the user inspects the same time window across modalities and channels.
 
-In practice, this means:
-- the user inspects the same time interval across both modalities;
-- the hydrophone panel shows event score over time;
-- the DAS panel shows DAS activity along the cable over time;
-- when the hydrophone score increases, the user can immediately inspect how that interval is reflected in DAS.
+## Localization and cable-wide claims
+**Localization** attempts on this dataset have **not** produced reliable results suitable as a thesis centerpiece. The documentation and MVP do **not** treat localization as a core deliverable.
 
-This allows the system to support event interpretation without requiring a hard combined detector at the current stage.
+Do not infer precise animal positions from the heatmap alone or from unsupported geometric reasoning without validated methods.
 
-### Why this approach is used
-This synchronized approach is appropriate for the current MVP because:
-- hydrophone data currently provide the most stable baseline timing cue;
-- DAS is the main target modality for visualization;
-- a hard combined detector would add unnecessary complexity at this stage;
-- the synchronized representation is already informative for event-oriented exploration.
+## DAS-centered event representation (honest framing)
+The final visual story should combine:
 
-### Planned future direction
-A more explicit combination of hydrophone and DAS evidence may be added later.
+- binary intervals for **navigation**,
+- continuous hydrophone **support** over time,
+- DAS **heatmap** as **context**,
+- **selected-channel** DAS as the main explanatory path for **sparse** whale-related evidence,
+- map and **source/context metadata** where available.
 
-Possible future directions include:
-- DAS activity score over time,
-- comparison between hydrophone score and DAS score,
-- or a combined confidence-like representation.
-
-However, this is not required for the current MVP.
-
-## DAS-centered event representation
-The final visual interpretation should therefore not be based only on hydrophone-derived event intervals.
-
-Instead, the project should aim for a representation in which:
-- binary event intervals remain useful for navigation,
-- continuous score over time shows event strength,
-- DAS activity becomes the main visual object,
-- and hydrophone helps anchor and support interpretation.
-
-For the current MVP, the main DAS representation will be a **normalized rolling RMS activity map**.
-
-In this representation, each cell of the DAS view reflects the relative signal activity of a given channel within a short time window, rather than raw amplitude alone.
-
-This choice was made because it is:
-- more stable than raw amplitude,
-- easier to interpret,
-- suitable for time-based visualization,
-- and appropriate for synchronized viewing together with hydrophone score and map context.
+The main cable-wide DAS representation remains a **normalized rolling RMS activity map** (or equivalent export); it is appropriate for **context**, not for fine-grained, cable-wide whale event confirmation.
 
 ## Current output fields
 The current `events.json` output contains fields such as:
@@ -197,7 +148,7 @@ The current `events.json` output contains fields such as:
 - `notes`
 - optional `das_support`
 
-These fields are sufficient for baseline event navigation, but likely not sufficient for the final event representation in the future MVP.
+These fields support baseline navigation; they do not imply validated DAS ground truth for every channel.
 
 ## Current limitations
 The current baseline has several limitations:
@@ -208,45 +159,35 @@ The current baseline has several limitations:
 - time resolution is limited by the STFT configuration,
 - there is no species classification,
 - there is no calibrated probability model,
-- DAS is not yet used as a full event evidence source.
+- DAS is not a validated, cable-wide event detector; **selected-channel** views matter more than aggregate heatmap peaks for whale-related claims.
 
 ## Cable sensitivity limitations
-The paper indicates that the cable had sensitivity limitations in some parts of the system.
+The deployment and processing context imply **limited acoustic sensitivity** on DAS for much of the array. Weak or absent DAS response does **not** prove absence of sound in the water column.
 
-This is relevant for interpretation because weak DAS response does not always imply absence of an acoustic event. For this reason, cable sensitivity issues should ideally be reflected in the visualization at least as:
-- contextual information,
-- annotation,
-- or an interpretive note for the user.
-
-This does not have to become a full subsystem in the MVP, but it should not be ignored.
+Visualization and thesis narrative should treat low sensitivity as a **known property of the data**, not as a failure to “find whales everywhere.”
 
 ## Source ground truth in the interface
-If source metadata and emitted signal location are available and reliable, the interface should display source ground-truth position.
+When **source** position and related metadata are available and loaded from exports, they provide valuable **context** for synchronized map views. Such fields should be labeled as dataset-provided **context**, not as proof that every hydrophone interval corresponds to a localized DAS signature.
 
-This would improve:
-- spatial interpretability,
-- relation between emission and observed activity,
-- and the overall clarity of the synchronized map-based view.
-
-Predicted source position should only be shown if the project later includes a justified estimation method. Ground-truth display is more realistic for the current scope.
+Predicted or estimated animal positions should only appear if a justified estimation pipeline exists; that is **not** a current MVP commitment.
 
 ## Open questions
 The following questions remain open and should be addressed in the next project stage:
 
-- Is the current frequency range sufficient for humpback-related exploration, or should it be expanded?
+- Is the current hydrophone frequency range sufficient for humpback-related exploration, or should it be expanded?
 - Should the score remain a simple spectrogram mean, or should alternative features be tested?
-- Should the final interface show score in raw form, normalized form, or bounded confidence form?
-- How should DAS activity be aggregated into the most interpretable visual representation?
-- What is the best practical way to combine hydrophone and DAS evidence in the MVP?
+- Should the interface emphasize normalized vs. raw hydrophone score scaling?
+- How should **environmental** and coupling-related structure along the cable be surfaced alongside whale-focused views?
+- What is the best practical way to combine hydrophone **support** and **selected-channel** DAS without overclaiming?
 
 ## Recommended next direction
 The current recommendation is:
 
-- keep the current baseline detector as a practical candidate generator,
-- keep binary intervals for navigation,
-- expose a continuous event score over time,
-- treat hydrophone as a support layer,
-- make DAS the central visual layer,
-- move toward combined hydrophone + DAS evidence,
-- include source ground-truth position if possible,
-- and reflect cable sensitivity issues at least as contextual information in the visualization.
+- keep the baseline detector as a practical **navigation** aid,
+- keep binary intervals for jumping in time,
+- expose continuous hydrophone **support** over time,
+- treat hydrophone as a **support layer**,
+- treat DAS **heatmap** as **secondary context**,
+- make **selected-channel** inspection central for **sparse** whale-related interpretation,
+- expand the **environmental branch** where it clarifies non-whale structure,
+- avoid centering the thesis on **localization** or cable-wide DAS whale detection.

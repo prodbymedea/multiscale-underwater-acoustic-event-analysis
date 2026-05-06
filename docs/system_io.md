@@ -6,8 +6,8 @@ This document defines the main inputs and outputs of the current project pipelin
 Its purpose is to clarify:
 - what data enter the system,
 - what intermediate artifacts are produced,
-- what will later be consumed by the interactive viewer,
-- and what the final project output is expected to be.
+- what the **interactive viewer** consumes,
+- and what the final project output is.
 
 ## System inputs
 
@@ -24,7 +24,7 @@ Examples:
 These files contain:
 - DAS data,
 - hydrophone data,
-- source-related data,
+- source-related data (where present in the file),
 - and metadata attributes.
 
 ### 2. Spatial context file
@@ -48,95 +48,87 @@ The system may also use configurable preprocessing parameters, for example:
 These are not separate dataset files, but they act as input settings for the processing pipeline.
 
 ### 4. Optional selected time interval
-For future interactive viewing, the user may select a specific time interval from a shot.
+In the interactive viewer, the user selects a time interval within a shot.
 
-This interval acts as a user-level input for focused inspection and visualization.
+This interval drives synchronized rendering across DAS, hydrophone, map, and selected-channel panels.
 
 ## Intermediate outputs
 
-The current pipeline already produces several intermediate structured outputs.
+The pipeline produces structured outputs under `output/shots/<shot_id>/` (and sample copies under `output_samples/` where used).
 
 ### Metadata and summaries
-- `shot_metadata.json`
-- `recorders_summary.json`
-
-These describe shot-level properties, available sensors, and basic metadata.
+- `shot_metadata.json` — shot-level properties; may include **source/context** fields (e.g. source position when exported from ingest)
+- `recorders_summary.json` — recorder/channel summary for the viewer
 
 ### Signal-based outputs
 - `spectrogram.json`
 - `waveform.json`
 - `das_preview.json`
 - `das_preprocessed_preview.npz`
-- `das_activity_map.npz`
+- `das_activity_map.npz` — time × channel activity used for the **DAS heatmap context layer** in the viewer (normalized rolling RMS or equivalent; see preprocessing docs)
 
-These provide compact visual-analysis-friendly representations of the raw data. By default, the preprocessed DAS preview spans the **full `DAS` time span** in the shot HDF5 (optional clipping via `src/preprocess_das.py`); see `docs/das_hydrophone_alignment.md` for synchronization with hydrophone exports.
+By default, the preprocessed DAS preview spans the **full `DAS` time span** in the shot HDF5 (optional clipping via `src/preprocess_das.py`); see `docs/das_hydrophone_alignment.md` for synchronization with hydrophone exports.
 
 ### Spatial output
-- `situation.json`
+- `situation.json` — map-ready spatial context derived from `Situation.h5`
 
-This contains map-ready spatial context derived from `Situation.h5`.
-
-### Event output
-- `events.json`
+### Event and hydrophone support outputs
+- `events.json` — baseline candidate intervals (hydrophone-driven; navigation)
 - `hydrophone_event_score.npz`
 - `hydrophone_event_score_metadata.json`
-- `viewer_event_guidance.json`
+- `viewer_event_guidance.json` — optional compact guidance for the viewer
 
-This contains baseline candidate event intervals and associated fields such as timing, score, and support information.
+### Viewer manifest
+- `viewer_manifest.json` — lists paths to assets the static viewer loads (`shot_metadata`, `recorders_summary`, `events`, DAS activity, hydrophone activity, `situation`, etc.)
 
-### Selected-channel demo (Orca, Stage 1)
+### Selected-channel exports (Orca and Humpback)
 
-- `selected_channel_bundle.json` — index/metadata for one default DAS channel (no HDF5 in viewer)
-- `selected_channel_signal.npz` — native-rate median-centered waveform
-- `selected_channel_spectrogram.npz` — STFT PSD in dB (`Sxx_db`)
-- `selected_channel_bandpass_score.npz` — optional high-band DAS support score (not whale probability)
+Built by `src/build_selected_channel_bundle.py` and referenced from `viewer_manifest.json` (e.g. `selected_channel_demo`, `selected_channel_mode_available`).
 
-Built by `src/build_selected_channel_bundle.py`; `viewer_manifest.json` may include a `selected_channel_demo` block with paths.
+**Per-channel NPZs** (compact; no HDF5 in the browser):
+- `selected_channel_p<preview_col>_signal.npz` — native-rate median-centered waveform for that preview column
+- `selected_channel_p<preview_col>_spectrogram.npz` — STFT PSD in dB (`Sxx_db`)
+- `selected_channel_p<preview_col>_bandpass_score.npz` — optional band-pass **support** score (MAD threshold metadata; **not** whale probability)
 
-## Planned viewer inputs
+**Legacy-compatible filenames** (duplicate the **default** preview column’s triple for backward compatibility):
+- `selected_channel_signal.npz`
+- `selected_channel_spectrogram.npz`
+- `selected_channel_bandpass_score.npz`
 
-For the next MVP stage, the viewer is expected to consume a more explicit set of visualization-oriented inputs.
+**Metadata:**
+- `selected_channel_bundle.json` — schema `selected_channel_bundle_v1`: default preview column, raw channel index, distance along cable, recommended band-pass band, links to events/hydrophone score files, **`source_ground_truth`** block when available from `shot_metadata.json`
 
-These may include:
+**Multi-channel index (when more than one preview column is exported):**
+- `selected_channels_index.json` — schema `selected_channels_index_v1`: `default_preview_col`, list of `channels` with `preview_col`, `raw_das_channel_index`, `distance_m`, labels, and per-column NPZ filenames
 
-### 1. Time-based DAS activity export
-A DAS-centered representation that shows activity along the cable over time, for example:
-- normalized DAS activity,
-- rolling DAS intensity,
-- or another interpretable DAS activity map.
+The manifest may include `files.selected_channels_index` pointing to that index. The frontend loads the index when present and exposes a **Preview column** selector; otherwise it uses the legacy single triple.
 
-### 2. Hydrophone event score over time
-A time-aligned support signal that indicates when event-related acoustic activity is stronger.
+**Default preview columns (builder + thesis-facing configuration):**
+- **Orca:** `build_selected_channel_bundle.py` exports a Stage-2 multi-column set (e.g. preview columns **189, 12, 50**, plus configured extras). It may append a column corresponding to the **nearest preview grid point** to a requested raw channel (**861** in the current script). The **default** preview column written to `selected_channels_index.json` is **172** *only if* 172 is included in that export list; otherwise the script falls back to a summary-driven recommendation (e.g. from `orca_bandpass_summary.json` / `channel_inspection_summary.json`) or the first exported column. Thesis documentation treats the **intended** Orca focus as preview col **~172** / raw **~860** when that column is part of the bundle; always confirm `default_preview_col` in the generated index.
+- **Humpback:** default preview column **118** when present in the ranked export set (raw index **~590** in typical exports); additional columns come from event-aware ranking plus fixed extras in the builder.
 
-This is not intended to replace DAS, but to support temporal interpretation.
+Exact numeric mappings are always defined by the generated `selected_channel_bundle.json` / `selected_channels_index.json` for each shot build.
 
-### 3. Map-ready spatial context
-Map-compatible geometry and metadata, including:
-- bathymetry,
-- cable track,
-- source-related context where available.
+## Interactive viewer inputs
 
-### 4. Event interval boundaries
-Binary candidate intervals that can be used for:
-- navigation,
-- jumping to interesting regions,
-- and summarizing recordings.
+The static viewer (`site/`) loads, per shot:
+
+1. **`viewer_manifest.json`** and files it references.
+2. **DAS activity** — JSON (`viewer/das_activity.json`) or NPZ fallback (`das_activity_map.npz`).
+3. **Hydrophone support** — JSON (`hydrophone_activity.json`) or NPZ fallback (`hydrophone_event_score.npz`, optional metadata for threshold display).
+4. **Map/spatial context** — `situation.json` where available; map panel also uses `shot_metadata.json` / `recorders_summary.json` for recorder/source-style context (full bathymetry/fiber rendering may be partial; see `site/README.md`).
+5. **Selected-channel assets** — `selected_channels_index.json` + per-column NPZs, or legacy `selected_channel_*.npz` triple.
+6. **Events** — `events.json` for navigation chips and interval snapping.
+
+**Interaction:** For multi-channel selected-channel shots, **map click near the fiber** can snap the selected-channel panel to the nearest **exported** channel (same state as the dropdown), when implemented in `site/app.js`.
 
 ## Final output of the system
 
-The final output of the project is not a raw file or a single figure.
+The final output of the project is an:
 
-The intended final output is an:
+**interactive, map-first visual analysis prototype**
 
-**interactive DAS-centered visual analysis prototype**
-
-This viewer should allow the user to:
-- choose a shot,
-- choose a time interval,
-- inspect DAS activity over time,
-- inspect hydrophone support score,
-- view map-based spatial context,
-- and navigate to candidate events.
+with synchronized panels: DAS **context** heatmap, hydrophone **support**, spatial/map context, **selected-channel** DAS inspection, and candidate-event navigation—aligned with the scoped claims in `docs/project_scope.md` and `docs/research_findings.md`.
 
 ## Input / output summary
 
@@ -144,33 +136,28 @@ This viewer should allow the user to:
 - selected shot `.h5` file
 - `Situation.h5`
 - optional preprocessing parameters
-- optional selected time interval
+- user-selected time interval (in viewer)
 
-### Intermediate outputs
-- `shot_metadata.json`
-- `recorders_summary.json`
-- `spectrogram.json`
-- `waveform.json`
-- `das_preview.json`
+### Intermediate outputs (representative)
+- `shot_metadata.json`, `recorders_summary.json`
+- `spectrogram.json`, `waveform.json`, `das_preview.json`, `das_preprocessed_preview.npz`, `das_activity_map.npz`
 - `situation.json`
-- `events.json`
-
-### Future viewer inputs
-- time-based DAS activity export
-- hydrophone event score over time
-- map-ready context
-- event interval boundaries
+- `events.json`, `hydrophone_event_score.npz`, `hydrophone_event_score_metadata.json`
+- `viewer_manifest.json`
+- `selected_channel_bundle.json`, optional `selected_channels_index.json`, `selected_channel_p*_*.npz`, legacy `selected_channel_*.npz`
 
 ### Final output
-- interactive DAS-centered visual analysis prototype
+- interactive viewer (`site/`) consuming the above exports
 
 ## Current note
-At the current stage, the system already supports:
+The system supports:
 - ingest,
 - export,
 - quick inspection,
 - shot screening,
-- and baseline candidate-event generation.
-- and normalized rolling-RMS DAS activity map generation for Whales shots.
+- baseline candidate-event generation,
+- DAS activity map generation for viewer context,
+- **selected-channel** multi-export bundles for **whales_orca** and **whales_humpback**,
+- manifest-driven loading in the static viewer.
 
-The next implementation stage should focus on transforming these outputs into a synchronized time-based viewer.
+Future work may incorporate additional **environmental** or model-derived inputs **only** as real artifacts in this pipeline (no placeholder filenames in documentation).

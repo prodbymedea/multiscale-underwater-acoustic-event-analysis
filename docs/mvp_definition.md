@@ -2,89 +2,66 @@
 
 ## Goal
 
-**Multiscale, DAS-centered visualization and event-oriented exploration** for a distributed underwater acoustic monitoring scenario (DAS + hydrophones), using the public **DASLakeZurich** dataset. The focus is a reproducible pipeline and a clear, thesis-appropriate MVP scope for this specific dataset—not operational deployment.
+**Interactive, map-first visual analysis** of the public **DASLakeZurich** dataset, combining DAS, hydrophones, and spatial context for a **dataset-specific** thesis MVP—not operational deployment.
 
-The MVP is no longer defined as a collection of static plots only. Its intended direction is an **interactive visual analysis prototype**, where the user can inspect how event-related activity develops over time, along the fiber, and in spatial context.
+The MVP is an **interactive viewer** (static site under `site/`) backed by reproducible ingest/export scripts. The emphasis is on **interpretable exploration under known limitations**: low DAS acoustic sensitivity, **sparse** whale-related coupling limited to **selected channels**, and **no reliable cable-wide localization** as a core claim.
 
 ## In scope (current MVP)
 
-- **Ingest / export:** HDF5 → compact JSON-friendly summaries (`src/ingest_prototype.py`).
-- **Quick plots:** Matplotlib inspection of exports, including improved DAS scaling (`src/visualize_export.py`).
-- **Shot screening:** Compare a few shots; write per-shot figures under `figures/shots/<slug>/` (`src/screen_shots.py`).
-- **Baseline events:** Simple hydrophone-spectrogram activity detector with MAD thresholding; optional DAS hint only (`src/extract_events_baseline.py`).
-- **Documentation:** Subset choice, event definition, project scope, dataset overview, and data policy (`docs/`, `data/README.md`).
+- **Ingest / export:** HDF5 → compact JSON/NPZ summaries (`src/ingest_prototype.py`, preprocessing and activity exports).
+- **Quick plots:** Matplotlib inspection of exports (`src/visualize_export.py`).
+- **Shot screening:** Per-shot figures under `figures/shots/<slug>/` (`src/screen_shots.py`).
+- **Baseline events:** Hydrophone-spectrogram activity score with MAD thresholding; intervals for navigation (`src/extract_events_baseline.py`).
+- **Selected-channel bundles:** Per-preview-column NPZ exports and optional `selected_channels_index.json` for multi-channel shots (`src/build_selected_channel_bundle.py`).
+- **Viewer bundle:** `viewer_manifest.json` and related paths (`src/build_viewer_bundle.py`).
+- **Documentation:** Scope, events, system I/O, dataset notes, and research findings (`docs/`, `data/README.md`).
 
-## Updated MVP direction
+## Viewer direction (current and near-term)
 
-The MVP should now move toward:
+The implemented and planned MVP behavior is aligned with:
 
-- **DAS-centered visualization** as the main product focus.
-- **Synchronized views** across DAS, hydrophone support data, and spatial context.
-- **Time interval selection**, so the user can inspect a selected interval (for example, 30 seconds).
-- **Event score / confidence-like representation** over time, rather than only binary event intervals.
-- **Map + DAS + time-based exploration**, instead of relying only on static PNG outputs.
+- **Map-first interaction:** spatial panel for context; for multi-channel selected-channel shots, **map click near the fiber** can snap to the nearest **exported** selected channel (where implemented).
+- **Selected-channel DAS inspection:** primary path for interpreting **sparse** whale-related evidence—waveform, spectrogram, and optional high-band **support** score (explicitly **not** whale probability).
+- **Hydrophone as support/reference:** timeline score and candidate events for timing and navigation; not a claim of ground-truth whale labeling on DAS.
+- **Source/context integration:** shot and recorder metadata and source ground-truth fields when present in exports (e.g. in `shot_metadata.json` / bundle metadata).
+- **DAS activity heatmap as secondary context layer:** normalized rolling-RMS (or equivalent) **cable-wide** view for situational awareness; **not** oversold as a precise detector or as uniform sensitivity along the full cable.
+- **Sparse whale-related visibility:** Orca-class shots may show clearer band-limited structure on **selected** channels; Humpback remains weaker/noisier on DAS in current processing—UI and docs stay consistent with that asymmetry.
+- **Environmental / cable-along-track patterns:** treated as a **meaningful second branch** for future or parallel analysis (e.g. interpreting non-whale structure); not required to be fully implemented in the first viewer release, but within thesis scope as interpretive direction.
 
-In this direction, hydrophone data remain useful, but mainly as:
-- a reference timing source,
-- a support signal for interpretation,
-- and a synchronized secondary view.
+## Out of scope as core MVP deliverables
 
-The main visual contribution of the MVP should remain DAS-centered.
-
-## In scope for the next MVP iteration
-
-The next practical MVP iteration should include:
-
-- selected-shot exploration rather than full-dataset processing;
-- synchronized DAS + hydrophone + map views;
-- interval-based navigation;
-- baseline candidate events for navigation;
-- continuous score/confidence-like event interpretation;
-- DAS activity visualization that is more interpretable than raw amplitude alone.
+- **Reliable whale localization** or cable-wide whale **detection** validated on DAS.
+- **Machine learning** classification (species, vessel vs. whale, etc.).
+- Full real-time analytics or streaming.
+- Production backend, database, authentication, or deployment infrastructure.
+- A universal DAS visualization platform for arbitrary datasets.
+- A fully calibrated whale-probability model.
+- Committing raw HDF5, ZIPs, or large generated JSON to Git.
 
 ## Technical structure of the MVP output
 
-The technical core output of the MVP is an interactive viewer in which the user can:
-- choose a shot,
-- choose a time interval,
-- inspect DAS activity over time,
-- inspect hydrophone support score,
-- view map-based spatial context,
-- and jump to candidate events.
+The viewer synchronizes interval, cursor, and (where available) event navigation across:
 
-The main DAS visual layer in the MVP will be based on a **normalized rolling RMS activity map**.
+- DAS **context** panel (activity heatmap / fallback),
+- hydrophone **support** panel,
+- map/spatial panel,
+- selected-channel panel (single or multi-preview-column via `selected_channels_index.json`).
 
-This means that DAS will be shown not as raw amplitude only, but as a time- and channel-dependent activity representation that is more interpretable for synchronized visual exploration.
-
-This technical structure is already defined conceptually and will guide the next implementation stage.
-
-## Out of scope (explicitly not MVP)
-
-- Machine learning classification (species, vessel vs. whale, etc.).
-- Full real-time analytics or streaming system.
-- Production backend, database, authentication, or deployment infrastructure.
-- A universal DAS visualization platform for arbitrary datasets.
-- A fully validated whale-probability model.
-- Committing raw HDF5, ZIPs, or large generated JSON to Git.
+Shot-specific **display-only** spectrogram enhancements in the selected-channel view improve readability without changing the underlying exported data.
 
 ## Primary assets for demos
 
-- **Shot:** `whales_humpback` (`2022-01-26--04-46-16--Humpback.h5`).
-- **Illustrative outputs:** `figures/shots/whales_humpback/`, `output_samples/shots/whales_humpback/`.
+- **Shots:** `whales_orca`, `whales_humpback` (and other exported shots as available).
+- **Illustrative outputs:** `figures/shots/<slug>/`, `output/shots/<slug>/`, `output_samples/shots/<slug>/` as committed or generated locally.
 
 ## Current interpretation of events
 
-At the current stage:
-- binary candidate events are still useful for navigation;
-- hydrophone spectrogram activity is used as a baseline timing guide;
-- DAS is the main target visual modality;
-- future event representation should move toward **continuous score / confidence-like interpretation** and stronger DAS involvement.
+- Binary candidate intervals remain useful for **navigation**.
+- Hydrophone score is the main **baseline timing/support** layer.
+- DAS **heatmap** supports context; **selected-channel** views carry the heavier interpretive weight for whale-related **sparse** evidence.
+- Continuous scores should be read as **activity/support**, not species probability.
 
-## Future extension (not implemented)
+## Future extension (optional, not blocking MVP)
 
-- Static or lightweight interactive demo on **GitHub Pages** from `site/`.
-- Synchronized interval-based viewer with:
-  - DAS activity view,
-  - hydrophone support view,
-  - and map-based spatial context.
-- More explicit DAS activity / confidence representation instead of static amplitude-only views.
+- Richer map layers (full bathymetry/fiber geometry rendering) if data and time allow.
+- Stronger **environmental branch** tooling (auxiliary model inputs or derived fields) **only** when backed by real exports—no fictional artifacts in docs or manifest.
