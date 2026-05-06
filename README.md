@@ -45,6 +45,8 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 | `src/test_orca_bandpass_baseline.py` | Orca native-rate DAS band-pass envelope baseline (diagnostic figures + `orca_bandpass_summary.json`) |
 | `src/build_selected_channel_bundle.py` | Stage 1: compact single-channel NPZ bundle + `selected_channel_bundle.json` for frontend (no HDF5) |
 | `src/summarize_orca_ncc_band.py` | Orca 2000–2490 Hz teacher NCC `.npy` → compact JSON + optional figure + markdown (per-channel max \|NCC\|, hotspot zones; no frontend) |
+| `src/summarize_env_netcdf.py` | Optional: list dims/vars/attrs in teacher lake-model `.nc` files → stdout or Markdown (`docs/environmental_data_audit.md` describes MVP variable choice) |
+| `src/export_environmental_mvp.py` | Environmental MVP: read Delft3D `.nc` → `output/environmental/` (`environmental_mvp_meta.json`, `environmental_map_fields.npz`, `environmental_fiber_timeseries.npz` with empty fiber arrays until CRS alignment) |
 
 ## Notes on data
 
@@ -156,6 +158,16 @@ python src/check_viewer_ready.py --shot whales_humpback
 python src/build_viewer_bundle.py
 python src/build_viewer_bundle.py --shot whales_humpback
 ```
+
+**Environmental MVP export (local Delft3D NetCDF under `data/raw/environment/`):**
+
+```bash
+python src/export_environmental_mvp.py
+python src/export_environmental_mvp.py --nc data/raw/environment/Models.delft3dflow_zurich_20220130.nc --also-nc data/raw/environment/Models.delft3dflow_zurich_20220123.nc
+python src/export_environmental_mvp.py --time-stride 6 --space-stride 2
+```
+
+Writes `output/environmental/environmental_mvp_meta.json`, `environmental_map_fields.npz`, and `environmental_fiber_timeseries.npz` (fiber-aligned arrays empty until model–LV95 alignment is solved). See `docs/environmental_data_audit.md`.
 
 ## Planned GitHub Pages deployment
 

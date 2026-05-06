@@ -32,6 +32,7 @@ These points motivate **selected-channel inspection** as the primary explanatory
 
 - **Patterns along the cable**—including variability that may relate to **environment**, coupling, or non-target sources—are plausibly an important part of the story for this dataset.
 - Treating an **environmental / cable-along-track** interpretation branch as **in scope** acknowledges that not every feature in DAS–time–channel space is whale-related, and that explaining such structure can be a **meaningful analytical contribution**.
+- **Lake-model / environmental variables:** Delft3D-FLOW NetCDF under `data/raw/environment/` has been inspected; **`docs/environmental_nc_inventory.md`** lists dimensions/variables, and **`docs/environmental_data_audit.md`** fixes the **MVP exports**: filtered horizontal flow **`UMNLDF` + `VMNLDF`** (stagger-corrected to cell faces) and **`THERMOCLINE`** (PyLake-derived depth on the same horizontal grid). A thin backend exporter, **`src/export_environmental_mvp.py`**, writes compact products under `output/environmental/` (model-frame map fields + metadata; fiber-aligned time series remain **empty** until CRS alignment is validated). CRS alignment between model `XZ`/`YZ` and Situation/fiber **CH1903+ / LV95** remains a prerequisite for trustworthy map overlay and along-fiber environmental traces.
 
 ## Thesis framing
 

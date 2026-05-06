@@ -8,6 +8,10 @@
 
 - **Reference / publication repository:** see the Zenodo record and associated publication (PDF in the dataset) for the canonical **ETH Zurich** data publication layout. If a public GitLab mirror exists for the original code bundle, it is typically linked from Zenodo metadata.
 
+## Optional teacher / external analysis artifacts
+
+If you receive processed NumPy arrays for thesis supervision (for example Orca band NCC exports such as `corr_band_Orca_2000_2490Hz.npy`), place them under `data/raw/` or another local path and **do not commit** large binaries. The repo includes `src/summarize_orca_ncc_band.py` to turn that specific `.npy` into a small JSON/Markdown/PNG summary.
+
 ## What is **not** in Git
 
 The following **must not** be committed to this GitHub repository:
@@ -18,6 +22,8 @@ The following **must not** be committed to this GitHub repository:
 - Virtual environments (`.venv/`)
 
 Place extracted or downloaded files under **`data/raw/`** (recommended) or keep the legacy layout at the repository root; the Python scripts resolve both (see `src/_repo_paths.py`).
+
+**Environmental / lake-model NetCDF (teacher-provided, not in Git):** e.g. `data/raw/environment/Models.delft3dflow_zurich_20220123.nc` and `..._20220130.nc` (Delft3D-FLOW; ~1.6 GB each). Inventory: `docs/environmental_nc_inventory.md`. MVP variable choice and export design: `docs/environmental_data_audit.md`. Summarizer: `src/summarize_env_netcdf.py`. Compact MVP export (flow + thermocline, model-frame map bundle + honest fiber placeholder): `src/export_environmental_mvp.py` → `output/environmental/` (requires `netCDF4` / `cftime`, see `requirements.txt`).
 
 ## Subsets used in this project
 

@@ -109,6 +109,8 @@ The manifest may include `files.selected_channels_index` pointing to that index.
 
 Exact numeric mappings are always defined by the generated `selected_channel_bundle.json` / `selected_channels_index.json` for each shot build.
 
+**Environmental Delft3D NetCDF (local `data/raw/environment/`, gitignored):** see `docs/environmental_nc_inventory.md` and `docs/environmental_data_audit.md`. After running `src/export_environmental_mvp.py`, compact MVP artifacts appear under **`output/environmental/`** (gitignored): `environmental_mvp_meta.json`, `environmental_map_fields.npz` (model-frame `XZ`/`YZ`, time, `u_face_t`/`v_face_t`, `thermocline_t`), and `environmental_fiber_timeseries.npz` (shared `time_s` plus **empty** fiber-aligned arrays until CRS alignment is validated).
+
 **Orca source-vs-DAS demo audio (optional, after `build_selected_channel_bundle.py`):**
 - `orca_source_segment.wav` — mono int16 WAV, experimental **Source** HDF5 segment aligned to `das_preprocessing_metadata.json` `selected_interval` (`start_time_s` / `end_time_s` on the DAS axis, resampled by sample index at source `Sample Rate (Hz)`).
 - `orca_audio_compare.json` — schema `orca_audio_compare_v1`: paths, sample rate, interpretation notes; referenced from `viewer_manifest.json` as `files.orca_audio_compare`.
@@ -151,6 +153,7 @@ with synchronized panels: DAS **context** heatmap, hydrophone **support**, spati
 - `viewer_manifest.json`
 - `selected_channel_bundle.json`, optional `selected_channels_index.json`, `selected_channel_p*_*.npz`, legacy `selected_channel_*.npz`
 - `orca_audio_compare.json`, `orca_source_segment.wav` (Orca, after selected-channel build)
+- `output/environmental/environmental_mvp_meta.json`, `environmental_map_fields.npz`, `environmental_fiber_timeseries.npz` (optional; requires local `.nc`; fiber series intentionally empty pending CRS)
 
 ### Final output
 - interactive viewer (`site/`) consuming the above exports
