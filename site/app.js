@@ -120,8 +120,128 @@ const el = {
   selchWaveCanvas: document.getElementById("selch-wave-canvas"),
   selchCaption: document.getElementById("selch-caption"),
   selchChannelWrap: document.getElementById("selch-channel-wrap"),
-  selchChannelSelect: document.getElementById("selch-channel-select")
+  selchChannelSelect: document.getElementById("selch-channel-select"),
+  selchAudioWrap: document.getElementById("selch-audio-wrap"),
+  selchAudioHint: document.getElementById("selch-audio-hint"),
+  selchPlayDasAudio: document.getElementById("selch-play-das-audio"),
+  selchPlaySourceAudio: document.getElementById("selch-play-source-audio"),
+  selchStopAudio: document.getElementById("selch-stop-audio")
 };
+
+/** Selected-channel demo audio (Orca): stop before shot/channel change. */
+let selchDemoAudioSource = null;
+
+function stopSelchDemoAudio() {
+  if (!selchDemoAudioSource) {
+    return;
+  }
+  try {
+    selchDemoAudioSource.stop(0);
+  } catch (_) {
+    /* already stopped */
+  }
+  try {
+    selchDemoAudioSource.disconnect();
+  } catch (_) {
+    /* ignore */
+  }
+  selchDemoAudioSource = null;
+}
+
+function getSharedAudioContext() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) {
+    return null;
+  }
+  if (!getSharedAudioContext._ctx) {
+    getSharedAudioContext._ctx = new AC();
+  }
+  const ctx = getSharedAudioContext._ctx;
+  if (ctx.state === "suspended") {
+    void ctx.resume();
+  }
+  return ctx;
+}
+
+function playSelchDasBandpass() {
+  const sc = state.shotBundle?.selectedChannel;
+  if (!sc?.available) {
+    return;
+  }
+  stopSelchDemoAudio();
+  const ctx = getSharedAudioContext();
+  if (!ctx) {
+    updateDataStatus("Web Audio API not available in this browser.");
+    return;
+  }
+  const ba = sc.bandpassAudio;
+  let y = ba?.y;
+  let fs = Number.isFinite(ba?.fs) ? ba.fs : sc.signalFs;
+  let label = "band-pass DAS";
+  if (!y?.length) {
+    y = sc.signal?.y;
+    label = "median-centered DAS (wideband)";
+  }
+  if (!y?.length || !Number.isFinite(fs) || fs <= 0) {
+    updateDataStatus("No DAS waveform available for audio.");
+    return;
+  }
+  const n = y.length;
+  const buf = ctx.createBuffer(1, n, fs);
+  const ch = buf.getChannelData(0);
+  let mx = 0;
+  for (let i = 0; i < n; i++) {
+    mx = Math.max(mx, Math.abs(y[i]));
+  }
+  const gain = mx > 0 ? 0.88 / mx : 1;
+  for (let i = 0; i < n; i++) {
+    ch[i] = y[i] * gain;
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  selchDemoAudioSource = src;
+  src.onended = () => {
+    selchDemoAudioSource = null;
+  };
+  src.start(0);
+  updateDataStatus(`Playing ${label} (demo)…`);
+}
+
+async function playSelchSourceReference() {
+  const oac = state.shotBundle?.orcaAudioCompare;
+  const rel = oac?.doc?.source_wav_file;
+  if (!rel || !oac.baseDir) {
+    updateDataStatus("Source reference audio not loaded (rebuild Orca bundle with WAV export).");
+    return;
+  }
+  stopSelchDemoAudio();
+  const ctx = getSharedAudioContext();
+  if (!ctx) {
+    updateDataStatus("Web Audio API not available in this browser.");
+    return;
+  }
+  try {
+    const url = `${oac.baseDir}/${rel}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const arr = await res.arrayBuffer();
+    const audioBuf = await ctx.decodeAudioData(arr.slice(0));
+    const src = ctx.createBufferSource();
+    src.buffer = audioBuf;
+    src.connect(ctx.destination);
+    selchDemoAudioSource = src;
+    src.onended = () => {
+      selchDemoAudioSource = null;
+    };
+    src.start(0);
+    updateDataStatus("Playing source reference segment (demo)…");
+  } catch (error) {
+    updateDataStatus(`Source playback failed: ${summarizeError(error)}`);
+  }
+}
 
 function updateDataStatus(message) {
   if (state.lastStatusMessage === message) {
@@ -2698,6 +2818,25 @@ function renderSelectedChannelPanel() {
     sc.meta?.selected_channel_label ||
     `Preview col ${sc.meta?.selected_preview_col}, raw ch ${sc.meta?.selected_raw_channel}`;
 
+  if (el.selchAudioWrap) {
+    const isOrca = state.selectedShotId === "whales_orca";
+    el.selchAudioWrap.hidden = !isOrca;
+    if (isOrca && el.selchAudioHint) {
+      const hasSrc = Boolean(state.shotBundle?.orcaAudioCompare?.doc?.source_wav_file);
+      const hasBp = Boolean(sc.bandpassAudio?.y?.length);
+      const hasWide = Boolean(sc.signal?.y?.length);
+      el.selchAudioHint.textContent = hasSrc
+        ? "Inspection only: source = dataset reference (Sound pressure @1m) at ~50 kHz; DAS = band-limited received channel (~5 kHz). Not what a whale sounded like in the lake."
+        : "Source reference WAV missing—re-run build_selected_channel_bundle for Orca. DAS audio uses exported waveform (band-pass when available).";
+      if (el.selchPlaySourceAudio) {
+        el.selchPlaySourceAudio.disabled = !hasSrc;
+      }
+      if (el.selchPlayDasAudio) {
+        el.selchPlayDasAudio.disabled = !hasBp && !hasWide;
+      }
+    }
+  }
+
   const { t: tSpec, sxx, nf, nt, fortran } = sc.spec;
 
   function drawSpec() {
@@ -3265,11 +3404,28 @@ function buildSelectedChannelPayloadFromNpz(signalNpz, specNpz, bandNpz) {
     bandHz = [Number(bandNpz.band_hz.data[0]), Number(bandNpz.band_hz.data[1])];
   }
 
+  let signalFs = null;
+  if (signalNpz.fs_hz?.data?.length) {
+    signalFs = Number(signalNpz.fs_hz.data[0]);
+  }
+
+  let bandpassAudio = null;
+  const bpWf = signalNpz.bandpass_waveform;
+  if (bpWf?.data?.length && tSigRec.data?.length && bpWf.data.length === tSigRec.data.length && Number.isFinite(signalFs)) {
+    bandpassAudio = {
+      t: tSigRec.data,
+      y: bpWf.data,
+      fs: signalFs
+    };
+  }
+
   return {
     signal: {
       t: tSigRec.data,
       y: sigRec.data
     },
+    signalFs,
+    bandpassAudio,
     spec: {
       t: tSpecRec.data,
       freqs: freqRec.data,
@@ -3304,6 +3460,8 @@ function applySelectedChannelPayload(sc, payload, entry) {
   sc.signal = payload.signal;
   sc.spec = payload.spec;
   sc.band = payload.band;
+  sc.signalFs = payload.signalFs;
+  sc.bandpassAudio = payload.bandpassAudio;
   if (entry) {
     sc.meta = buildMetaFromChannelEntry(entry);
   }
@@ -3428,6 +3586,7 @@ async function switchSelectedChannelToPreviewCol(previewCol) {
   if (!sc?.available || !sc.multiChannel) {
     return;
   }
+  stopSelchDemoAudio();
   const key = String(previewCol);
   const entry = sc.entryByCol?.[key];
   if (!entry?.files) {
@@ -3498,6 +3657,19 @@ async function loadBundleFromManifest(manifest, manifestUrl) {
   const dasActivity = await loadFile("das_activity");
   const situation = await loadFile("situation");
 
+  let orcaAudioCompare = null;
+  const oacRel = files.orca_audio_compare;
+  if (oacRel) {
+    try {
+      const doc = await fetchJson(`${baseDir}/${oacRel}`);
+      if (doc && doc.schema_version === "orca_audio_compare_v1") {
+        orcaAudioCompare = { doc, baseDir };
+      }
+    } catch (_) {
+      orcaAudioCompare = null;
+    }
+  }
+
   return {
     shotMetadata,
     recordersSummary,
@@ -3505,6 +3677,7 @@ async function loadBundleFromManifest(manifest, manifestUrl) {
     hydroActivity,
     dasActivity,
     situation,
+    orcaAudioCompare,
     missingCompatibilityFiles,
     mode: "full"
   };
@@ -3585,6 +3758,7 @@ async function onShotChanged() {
   }
 
   setPlayback(false);
+  stopSelchDemoAudio();
   updateDataStatus(`Loading synchronized bundle for ${selectedShotId}...`);
 
   const manifestResult = await loadManifestForShot(shotOption);
@@ -3732,6 +3906,22 @@ function bindEvents() {
         return;
       }
       void switchSelectedChannelToPreviewCol(v);
+    });
+  }
+
+  if (el.selchPlayDasAudio) {
+    el.selchPlayDasAudio.addEventListener("click", () => {
+      playSelchDasBandpass();
+    });
+  }
+  if (el.selchPlaySourceAudio) {
+    el.selchPlaySourceAudio.addEventListener("click", () => {
+      void playSelchSourceReference();
+    });
+  }
+  if (el.selchStopAudio) {
+    el.selchStopAudio.addEventListener("click", () => {
+      stopSelchDemoAudio();
     });
   }
 

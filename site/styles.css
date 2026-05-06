@@ -922,6 +922,54 @@ button:disabled {
   color: var(--muted);
 }
 
+.selch-audio-wrap {
+  margin-top: 0.65rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  background: rgba(8, 18, 38, 0.72);
+  border: 1px solid var(--line-soft);
+}
+
+.selch-audio-hint {
+  margin: 0.35rem 0 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--muted);
+  max-width: 72ch;
+}
+
+.selch-audio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.selch-audio-btn {
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(114, 246, 255, 0.35);
+  background: rgba(114, 246, 255, 0.12);
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+
+.selch-audio-btn:hover {
+  background: rgba(114, 246, 255, 0.2);
+}
+
+.selch-audio-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.selch-audio-btn-muted {
+  border-color: rgba(159, 179, 217, 0.35);
+  background: rgba(15, 28, 52, 0.65);
+}
+
 #selch-spec-canvas,
 #selch-band-canvas,
 #selch-wave-canvas {

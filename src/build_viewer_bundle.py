@@ -272,6 +272,37 @@ def build_manifest(shot: str) -> dict[str, Any]:
         ],
     }
 
+    # Preserve selected-channel + Orca audio compare paths if manifest was already patched
+    # (e.g. by build_selected_channel_bundle.py) so re-running this script does not strip them.
+    _preserve = (
+        "selected_channel_bundle",
+        "selected_channel_signal",
+        "selected_channel_spectrogram",
+        "selected_channel_bandpass_score",
+        "selected_channels_index",
+        "orca_audio_compare",
+    )
+    if viewer_manifest_path.is_file():
+        try:
+            with open(viewer_manifest_path, encoding="utf-8") as f:
+                old_m = json.load(f)
+            old_files = old_m.get("files") or {}
+            for pk in _preserve:
+                if pk in old_files:
+                    manifest["files"][pk] = old_files[pk]
+            for top_key in ("selected_channel_demo", "selected_channel_mode_available"):
+                if top_key in old_m:
+                    manifest[top_key] = old_m[top_key]
+            old_notes = old_m.get("notes")
+            if isinstance(old_notes, list):
+                seen = set(manifest["notes"])
+                for n in old_notes:
+                    if isinstance(n, str) and n not in seen:
+                        manifest["notes"].append(n)
+                        seen.add(n)
+        except Exception:
+            pass
+
     shot_dir.mkdir(parents=True, exist_ok=True)
     with open(viewer_manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)

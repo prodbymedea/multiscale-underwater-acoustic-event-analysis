@@ -80,6 +80,15 @@
                 <canvas id="selch-wave-canvas" width="1200" height="68" aria-label="Selected channel waveform"></canvas>
               </div>
             </div>
+            <div id="selch-audio-wrap" class="selch-audio-wrap" hidden>
+              <span class="selch-label">Audio (demo / inspection)</span>
+              <p id="selch-audio-hint" class="selch-audio-hint"></p>
+              <div class="selch-audio-row">
+                <button type="button" id="selch-play-das-audio" class="selch-audio-btn">Play DAS (band-pass)</button>
+                <button type="button" id="selch-play-source-audio" class="selch-audio-btn">Play source (reference)</button>
+                <button type="button" id="selch-stop-audio" class="selch-audio-btn selch-audio-btn-muted">Stop</button>
+              </div>
+            </div>
             <p id="selch-caption" class="panel-caption">Waiting for selected-channel bundle...</p>
           </div>
         </article>

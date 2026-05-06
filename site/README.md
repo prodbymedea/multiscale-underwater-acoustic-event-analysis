@@ -32,6 +32,7 @@ The same selected interval (`start` / `end`) now drives all three panels:
 	- shot-specific display-only spectrogram enhancements improve readability while preserving interaction behavior:
 		- Orca: 1500–2500 Hz focus + robust clipping + stronger per-frequency background suppression
 		- Humpback: 20–1400 Hz focus + robust clipping + lighter per-frequency background suppression
+	- **Orca-only demo audio** (after rebuilding `build_selected_channel_bundle.py`): the selected-channel panel shows **Audio (demo / inspection)** controls. **Play DAS (band-pass)** uses `bandpass_waveform` from the signal NPZ (~5 kHz native rate) when present, else median-centered wideband `signal`. **Play source (reference)** loads `orca_source_segment.wav` (~50 kHz) via `orca_audio_compare.json` from the manifest. This is for comparing **dataset reference vs received DAS channel**, not for claiming natural underwater whale sound.
 
 ## Synchronization behavior
 

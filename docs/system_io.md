@@ -86,7 +86,7 @@ By default, the preprocessed DAS preview spans the **full `DAS` time span** in t
 Built by `src/build_selected_channel_bundle.py` and referenced from `viewer_manifest.json` (e.g. `selected_channel_demo`, `selected_channel_mode_available`).
 
 **Per-channel NPZs** (compact; no HDF5 in the browser):
-- `selected_channel_p<preview_col>_signal.npz` — native-rate median-centered waveform for that preview column
+- `selected_channel_p<preview_col>_signal.npz` — native-rate median-centered waveform for that preview column; **Orca** exports also include **`bandpass_waveform`** (same band as the band-pass score) for browser demo audio
 - `selected_channel_p<preview_col>_spectrogram.npz` — STFT PSD in dB (`Sxx_db`)
 - `selected_channel_p<preview_col>_bandpass_score.npz` — optional band-pass **support** score (MAD threshold metadata; **not** whale probability)
 
@@ -109,6 +109,10 @@ The manifest may include `files.selected_channels_index` pointing to that index.
 
 Exact numeric mappings are always defined by the generated `selected_channel_bundle.json` / `selected_channels_index.json` for each shot build.
 
+**Orca source-vs-DAS demo audio (optional, after `build_selected_channel_bundle.py`):**
+- `orca_source_segment.wav` — mono int16 WAV, experimental **Source** HDF5 segment aligned to `das_preprocessing_metadata.json` `selected_interval` (`start_time_s` / `end_time_s` on the DAS axis, resampled by sample index at source `Sample Rate (Hz)`).
+- `orca_audio_compare.json` — schema `orca_audio_compare_v1`: paths, sample rate, interpretation notes; referenced from `viewer_manifest.json` as `files.orca_audio_compare`.
+
 ## Interactive viewer inputs
 
 The static viewer (`site/`) loads, per shot:
@@ -118,7 +122,8 @@ The static viewer (`site/`) loads, per shot:
 3. **Hydrophone support** — JSON (`hydrophone_activity.json`) or NPZ fallback (`hydrophone_event_score.npz`, optional metadata for threshold display).
 4. **Map/spatial context** — `situation.json` where available; map panel also uses `shot_metadata.json` / `recorders_summary.json` for recorder/source-style context (full bathymetry/fiber rendering may be partial; see `site/README.md`).
 5. **Selected-channel assets** — `selected_channels_index.json` + per-column NPZs, or legacy `selected_channel_*.npz` triple.
-6. **Events** — `events.json` for navigation chips and interval snapping.
+6. **Orca demo audio** — when present, `orca_audio_compare.json` + `orca_source_segment.wav` for **inspection-only** playback in the selected-channel panel (Web Audio).
+7. **Events** — `events.json` for navigation chips and interval snapping.
 
 **Interaction:** For multi-channel selected-channel shots, **map click near the fiber** can snap the selected-channel panel to the nearest **exported** channel (same state as the dropdown), when implemented in `site/app.js`.
 
@@ -145,6 +150,7 @@ with synchronized panels: DAS **context** heatmap, hydrophone **support**, spati
 - `events.json`, `hydrophone_event_score.npz`, `hydrophone_event_score_metadata.json`
 - `viewer_manifest.json`
 - `selected_channel_bundle.json`, optional `selected_channels_index.json`, `selected_channel_p*_*.npz`, legacy `selected_channel_*.npz`
+- `orca_audio_compare.json`, `orca_source_segment.wav` (Orca, after selected-channel build)
 
 ### Final output
 - interactive viewer (`site/`) consuming the above exports
