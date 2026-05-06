@@ -2,7 +2,7 @@
 """
 Compact MVP exporter for Delft3D-FLOW environmental NetCDF (Lake Zurich thesis).
 
-Reads UMNLDF, VMNLDF, THERMOCLINE (+ XZ, YZ, time; optional ALFAS for east/north).
+Reads UMNLDF, VMNLDF, R1 temperature slice, THERMOCLINE (+ XZ, YZ, time; optional ALFAS for east/north).
 Writes model-frame map fields and honest metadata; fiber sampling is deferred until
 CRS alignment is verified (no fake overlay).
 
@@ -33,10 +33,15 @@ except ImportError as e:
     print("netCDF4 is required: pip install netCDF4", file=sys.stderr)
     raise SystemExit(1) from e
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.2"
 DEFAULT_NC = REPO_ROOT / "data" / "raw" / "environment" / "Models.delft3dflow_zurich_20220123.nc"
 OUT_DIR = REPO_ROOT / "output" / "environmental"
 THERMOCLINE_FILL = -999.0
+# Delft3D dry / inactive horizontal velocity sentinel in this export (no CF _FillValue on U1).
+DELFT_DRY_VEL_ABS_MIN = 998.0
+# Default thesis instant when choosing among coverage-qualified timesteps.
+WHALE_WINDOW_PREFER_UNIX_UTC = datetime(2022, 1, 26, 12, 0, tzinfo=timezone.utc).timestamp()
+R1_DRY_SENTINEL = THERMOCLINE_FILL  # dry/land temperature cells use same -999 convention here
 
 
 def _read_var(ds: Dataset, name: str) -> np.ndarray:
@@ -60,25 +65,57 @@ def _read_scalar_attr(ds: Dataset, varname: str, attr: str, default: str | None 
     return default
 
 
-def stagger_u_to_cell(u: np.ndarray) -> np.ndarray:
-    """Average UMNLDF from staggered U-points to (M,N) cell-aligned field.
+def mask_delft_dry_velocity(a: np.ndarray) -> np.ndarray:
+    """Mask large-magnitude sentinel values used for dry/inactive U/V in 3D exports."""
+    a = np.asarray(a, dtype=np.float64)
+    return np.where(np.abs(a) >= DELFT_DRY_VEL_ABS_MIN, np.nan, a)
 
-    u shape: (T, MC, N) with MC == M. Convention: u_cell[m] = 0.5*(U[m] + U[m-1]) for m>=1.
+
+def pick_u1_vertical_index(u1_full: np.ndarray) -> int:
+    """Layer with the most non-dry U1 samples (summed over time and horizontal grid)."""
+    bad = np.abs(u1_full) >= DELFT_DRY_VEL_ABS_MIN
+    nz = u1_full.shape[1]
+    counts = [(~bad[:, k]).sum() for k in range(nz)]
+    return int(np.argmax(counts))
+
+
+def stagger_u_to_cell(u: np.ndarray) -> np.ndarray:
+    """Average U from staggered U-points to (M,N). NaN-aware (Delft dry cells).
+
+    u shape: (T, MC, N) with MC == M.
     """
+    u = np.asarray(u, dtype=np.float64)
     t, m, n = u.shape
-    out = np.zeros((t, m, n), dtype=np.float32)
+    out = np.full((t, m, n), np.nan, dtype=np.float64)
     out[:, 0, :] = u[:, 0, :]
-    out[:, 1:, :] = 0.5 * (u[:, 1:, :] + u[:, :-1, :])
-    return out
+    a = u[:, 1:, :]
+    b = u[:, :-1, :]
+    both = np.isfinite(a) & np.isfinite(b)
+    only_a = np.isfinite(a) & ~np.isfinite(b)
+    only_b = ~np.isfinite(a) & np.isfinite(b)
+    merged = np.where(both, 0.5 * (a + b), np.nan)
+    merged = np.where(only_a, a, merged)
+    merged = np.where(only_b, b, merged)
+    out[:, 1:, :] = merged
+    return out.astype(np.float32)
 
 
 def stagger_v_to_cell(v: np.ndarray) -> np.ndarray:
-    """Average VMNLDF from staggered V-points to (M,N). v shape: (T, M, NC)."""
+    """Average V from staggered V-points to (M,N). NaN-aware."""
+    v = np.asarray(v, dtype=np.float64)
     t, m, nc = v.shape
-    out = np.zeros((t, m, nc), dtype=np.float32)
+    out = np.full((t, m, nc), np.nan, dtype=np.float64)
     out[:, :, 0] = v[:, :, 0]
-    out[:, :, 1:] = 0.5 * (v[:, :, 1:] + v[:, :, :-1])
-    return out
+    a = v[:, :, 1:]
+    b = v[:, :, :-1]
+    both = np.isfinite(a) & np.isfinite(b)
+    only_a = np.isfinite(a) & ~np.isfinite(b)
+    only_b = ~np.isfinite(a) & np.isfinite(b)
+    merged = np.where(both, 0.5 * (a + b), np.nan)
+    merged = np.where(only_a, a, merged)
+    merged = np.where(only_b, b, merged)
+    out[:, :, 1:] = merged
+    return out.astype(np.float32)
 
 
 def rotate_to_east_north(
@@ -119,9 +156,39 @@ def time_to_seconds_since_epoch(time_var) -> tuple[np.ndarray, str]:
     return tnum.astype(np.float64), units
 
 
+def recommend_viewer_time_index(
+    scalar_export: np.ndarray,
+    time_s_export: np.ndarray,
+    prefer_unix: float | None = WHALE_WINDOW_PREFER_UNIX_UTC,
+    scalar_short_name: str = "primary scalar",
+) -> tuple[int, str]:
+    """Pick a timestep index in the *exported* series for frontend default."""
+    nt = scalar_export.shape[0]
+    if nt == 0:
+        return 0, "No timesteps."
+    fracs = np.array([np.mean(np.isfinite(scalar_export[i])) for i in range(nt)], dtype=np.float64)
+    fmax = float(np.max(fracs))
+    if fmax <= 0 and prefer_unix is not None and time_s_export.size == nt:
+        i0 = int(np.argmin(np.abs(time_s_export - prefer_unix)))
+        return i0, f"No finite {scalar_short_name} in this export; defaulted to nearest preferred UTC."
+    if fmax <= 0:
+        return 0, f"No finite {scalar_short_name}; defaulted to first step."
+    thresh = max(0.002, 0.35 * fmax)
+    cand = np.where(fracs >= thresh)[0]
+    if prefer_unix is not None and cand.size > 0 and time_s_export.size == nt:
+        i_sel = int(cand[np.argmin(np.abs(time_s_export[cand] - prefer_unix))])
+        return (
+            i_sel,
+            f"Among steps with {scalar_short_name} coverage ≥{100 * thresh:.1f}% (max {100 * fmax:.1f}%), "
+            f"closest to thesis whale-window UTC.",
+        )
+    return int(np.argmax(fracs)), f"Largest {scalar_short_name} coverage in export ({100 * fmax:.1f}% finite cells)."
+
+
 def decimate_time_space(
     u: np.ndarray,
     v: np.ndarray,
+    temp: np.ndarray,
     th: np.ndarray,
     xz: np.ndarray,
     yz: np.ndarray,
@@ -130,10 +197,11 @@ def decimate_time_space(
 ) -> tuple[np.ndarray, ...]:
     u = u[::time_stride, ::space_stride, ::space_stride]
     v = v[::time_stride, ::space_stride, ::space_stride]
+    temp = temp[::time_stride, ::space_stride, ::space_stride]
     th = th[::time_stride, ::space_stride, ::space_stride]
     xz = xz[::space_stride, ::space_stride]
     yz = yz[::space_stride, ::space_stride]
-    return u, v, th, xz, yz
+    return u, v, temp, th, xz, yz
 
 
 def build_meta(
@@ -206,8 +274,8 @@ def build_meta(
         "outputs": {
             "environmental_mvp_meta.json": "this file",
             "environmental_map_fields.npz": (
-                "Keys: XZ, YZ (M,N), time_s (Nt,), u_face_t, v_face_t, thermocline_t (Nt,M,N); "
-                "coordinates in model plane."
+                "Keys: XZ, YZ (M,N), time_s (Nt,), u_face_t, v_face_t, temperature_t (Nt,M,N) primary scalar, "
+                "thermocline_t secondary; model plane."
             ),
             "environmental_fiber_timeseries.npz": (
                 "Keys: time_s (Nt,); along_m (0,); u_ms, v_ms, thermocline_m (Nt,0) until CRS resolved."
@@ -246,12 +314,32 @@ def main() -> None:
     processing_notes = [
         "UMNLDF/VMNLDF: staggered components averaged to (M,N) per environmental_data_audit.md.",
         "Rotation to east/north via ALFAS when present; else grid-aligned u,v exported.",
-        f"THERMOCLINE: values equal to {THERMOCLINE_FILL} masked to NaN.",
+        f"THERMOCLINE: values equal to {THERMOCLINE_FILL} masked to NaN (exported as thermocline_t; sparse).",
     ]
+
+    flow_catalog_note = "UMNLDF/VMNLDF (filtered horizontal)"
+    u1_layer_used: int | None = None
+    r1_k: int | None = None
+    r1_units_attr: str | None = None
 
     with Dataset(nc_path, "r") as ds:
         u_raw = _read_var(ds, "UMNLDF")
         v_raw = _read_var(ds, "VMNLDF")
+        u_abs_max = float(np.nanmax(np.abs(u_raw))) if u_raw.size else 0.0
+        v_abs_max = float(np.nanmax(np.abs(v_raw))) if v_raw.size else 0.0
+        if u_abs_max < 1e-12 and v_abs_max < 1e-12 and "U1" in ds.variables and "V1" in ds.variables:
+            u1_raw_full = np.array(ds.variables["U1"][:], dtype=np.float64)
+            v1_raw_full = np.array(ds.variables["V1"][:], dtype=np.float64)
+            u1_layer_used = pick_u1_vertical_index(u1_raw_full)
+            u1_full = mask_delft_dry_velocity(u1_raw_full)
+            v1_full = mask_delft_dry_velocity(v1_raw_full)
+            u_raw = u1_full[:, u1_layer_used, :, :]
+            v_raw = v1_full[:, u1_layer_used, :, :]
+            processing_notes.append(
+                f"UMNLDF/VMNLDF are all zero in this file; using U1/V1 at vertical index k={u1_layer_used} "
+                f"(auto-picked wet layer; values with |U| or |V| ≥ {DELFT_DRY_VEL_ABS_MIN:g} masked as dry)."
+            )
+            flow_catalog_note = f"U1/V1 layer {u1_layer_used} (Eulerian; UMNLDF/VMNLDF empty here)"
         th_var = ds.variables["THERMOCLINE"]
         th_raw = np.array(th_var[:], dtype=np.float64)
         th_raw = np.where(th_raw == THERMOCLINE_FILL, np.nan, th_raw)
@@ -275,8 +363,8 @@ def main() -> None:
             raise SystemExit(3)
         m, n = m_v, nc_v
 
-        u_cell = stagger_u_to_cell(u_raw.astype(np.float64))
-        v_cell = stagger_v_to_cell(v_raw.astype(np.float64))
+        u_cell = stagger_u_to_cell(u_raw)
+        v_cell = stagger_v_to_cell(v_raw)
 
         if "ALFAS" in ds.variables:
             alfas = np.array(ds.variables["ALFAS"][:], dtype=np.float32)
@@ -288,14 +376,37 @@ def main() -> None:
 
         th = th_raw.astype(np.float32)
 
-        u_units = _read_scalar_attr(ds, "UMNLDF", "units")
+        if "R1" not in ds.variables:
+            print("NetCDF missing R1; cannot export MVP primary scalar (temperature).", file=sys.stderr)
+            raise SystemExit(4)
+        if u1_layer_used is not None:
+            r1_k = u1_layer_used
+        else:
+            u1_ref = np.array(ds.variables["U1"][:], dtype=np.float64)
+            r1_k = pick_u1_vertical_index(u1_ref)
+        r1_var = ds.variables["R1"]
+        r1_units_attr = _read_scalar_attr(ds, "R1", "units")
+        if r1_var.shape[1] < 1 or r1_var.shape[2] <= r1_k:
+            print("R1 dimensions incompatible with chosen layer index.", file=sys.stderr)
+            raise SystemExit(5)
+        temp_raw = np.array(r1_var[:, 0, r1_k, :, :], dtype=np.float64)
+        temp_raw = np.where(temp_raw == R1_DRY_SENTINEL, np.nan, temp_raw)
+        if getattr(r1_var, "_FillValue", None) is not None:
+            temp_raw = np.where(temp_raw == float(r1_var._FillValue), np.nan, temp_raw)
+        temp = temp_raw.astype(np.float32)
+        processing_notes.append(
+            f"Primary scalar: R1 (NAMCON=temperature) layer k={r1_k}, aligned with wet-layer heuristic used for U1/V1. "
+            f"Dry/land masked at {R1_DRY_SENTINEL:g}. File attribute units are nominal; viewer labels °C."
+        )
+
+        u_units = _read_scalar_attr(ds, "UMNLDF" if u1_layer_used is None else "U1", "units")
         th_units = _read_scalar_attr(ds, "THERMOCLINE", "units")
         xz_units = _read_scalar_attr(ds, "XZ", "units")
 
     # Decimate for map bundle
     ts, ss = max(1, args.time_stride), max(1, args.space_stride)
-    u_d, v_d, th_d, xz_d, yz_d = decimate_time_space(
-        u_e, v_n, th, xz, yz, ts, ss
+    u_d, v_d, temp_d, th_d, xz_d, yz_d = decimate_time_space(
+        u_e, v_n, temp, th, xz, yz, ts, ss
     )
     nt_exp = u_d.shape[0]
     m_exp, n_exp = xz_d.shape
@@ -337,6 +448,54 @@ def main() -> None:
             "space_stride": ss,
         }
     )
+    meta["variables"]["flow_u"]["description"] = flow_catalog_note
+    meta["variables"]["flow_v"]["description"] = flow_catalog_note
+    if u1_layer_used is not None:
+        meta["variables"]["flow_u"]["netcdf_fallback"] = "U1"
+        meta["variables"]["flow_v"]["netcdf_fallback"] = "V1"
+        meta["variables"]["flow_u"]["vertical_index_k"] = u1_layer_used
+        meta["variables"]["flow_v"]["vertical_index_k"] = u1_layer_used
+
+    meta["variables"]["temperature"] = {
+        "netcdf": "R1",
+        "lstsci_index": 0,
+        "vertical_index_k": r1_k,
+        "export": "temperature_t",
+        "units_file": r1_units_attr,
+        "units_interpretation": "Nominal NetCDF units; displayed as °C (typical lake T magnitude).",
+    }
+    meta["mvp_scalar"] = {
+        "primary": "temperature_t",
+        "secondary": "thermocline_t",
+        "rationale": (
+            "R1 temperature at the wet vertical layer has much higher horizontal coverage than THERMOCLINE "
+            "in the audited 20220123 file; thermocline remains exported as a secondary diagnostic."
+        ),
+    }
+
+    th_time_s = time_s[::ts].astype(np.float64)
+    if th_time_s.shape[0] == temp_d.shape[0]:
+        def_idx, def_note = recommend_viewer_time_index(
+            temp_d, th_time_s, scalar_short_name="R1 temperature coverage"
+        )
+        th_global_fin = float(np.mean(np.isfinite(th_d)))
+        temp_global_fin = float(np.mean(np.isfinite(temp_d)))
+        meta["viewer_hints"] = {
+            "primary_scalar": "temperature_t",
+            "default_time_index": int(def_idx),
+            "default_time_index_note": def_note,
+            "temperature_r1_layer_k": r1_k,
+            "temperature_finite_fraction_global": temp_global_fin,
+            "temperature_note": (
+                "Map shows R1 (constituent index 0 = temperature per NAMCON) on the horizontal grid; "
+                "dry/land (-999) masked. Not causal proof vs DAS; model-frame context only."
+            ),
+            "thermocline_finite_fraction_global": th_global_fin,
+            "thermocline_note": (
+                "thermocline_t is still exported but is mostly -999 in this run — use for specialist checks, "
+                "not as the main viewer layer."
+            ),
+        }
 
     out_meta = args.out_dir / "environmental_mvp_meta.json"
     with open(out_meta, "w", encoding="utf-8") as f:
@@ -350,6 +509,7 @@ def main() -> None:
         time_s=time_s[::ts].astype(np.float64),
         u_face_t=u_d,
         v_face_t=v_d,
+        temperature_t=temp_d,
         thermocline_t=th_d,
     )
 

@@ -92,6 +92,15 @@ Fallback mode keeps synchronized interval/events but uses metadata-driven placeh
 - DAS activity and hydro **main** panels can use JSON compatibility exports when present, with NPZ fallback (`das_activity_map.npz`, `hydrophone_event_score.npz`) when JSON is absent.
 - Map panel currently renders lightweight source/recorder context, not full bathymetry/fiber-track geometry rendering.
 
+## Environmental MVP panel (model grid inspection)
+
+Below the main synchronized viewer, **Environmental context (model grid)** loads optional artifacts from **`output/environmental/`** (same paths as the backend exporter):
+
+- `environmental_mvp_meta.json` — caveats, CRS/alignment status, variable notes
+- `environmental_map_fields.npz` — `XZ`/`YZ`, `time_s`, `thermocline_t`, `u_face_t`, `v_face_t` (via `fflate` + existing NPY parser)
+
+The UI shows **R1 temperature** (primary; nominal °C at layer **k** from export metadata) and horizontal flow (speed heatmap + arrows) as a regular **M×N index-space** heatmap: row and column indices, not a georeferenced lake map. **`XZ`/`YZ`** remain in the bundle for future geographic rendering but are **not** used for canvas layout (avoids broken projection on curvilinear grids). **`thermocline_t`** may still be in the NPZ as a sparse secondary field — the panel prioritizes temperature for coverage. It does **not** overlay these fields on the LV95 fiber map; along-fiber series stay a **pending** note until a validated transform exists. If the folder is missing, the section explains how to run `python src/export_environmental_mvp.py` and serve from the repo root.
+
 ## Local testing
 
 Run a static server from repository root:
@@ -104,7 +113,7 @@ Open:
 
 - `http://localhost:8000/site/`
 
-Avoid `file://` opening because browser fetch restrictions can block local JSON loading.
+Avoid `file://` opening because browser fetch restrictions can block local JSON loading. For the environmental panel, the server must expose `output/environmental/` (run the exporter first).
 
 ## Scope notes
 

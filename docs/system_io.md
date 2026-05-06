@@ -109,7 +109,7 @@ The manifest may include `files.selected_channels_index` pointing to that index.
 
 Exact numeric mappings are always defined by the generated `selected_channel_bundle.json` / `selected_channels_index.json` for each shot build.
 
-**Environmental Delft3D NetCDF (local `data/raw/environment/`, gitignored):** see `docs/environmental_nc_inventory.md` and `docs/environmental_data_audit.md`. After running `src/export_environmental_mvp.py`, compact MVP artifacts appear under **`output/environmental/`** (gitignored): `environmental_mvp_meta.json`, `environmental_map_fields.npz` (model-frame `XZ`/`YZ`, time, `u_face_t`/`v_face_t`, `thermocline_t`), and `environmental_fiber_timeseries.npz` (shared `time_s` plus **empty** fiber-aligned arrays until CRS alignment is validated).
+**Environmental Delft3D NetCDF (local `data/raw/environment/`, gitignored):** see `docs/environmental_nc_inventory.md` and `docs/environmental_data_audit.md`. After running `src/export_environmental_mvp.py`, compact MVP artifacts appear under **`output/environmental/`** (gitignored): `environmental_mvp_meta.json`, `environmental_map_fields.npz` (model-frame `XZ`/`YZ`, time, `u_face_t`/`v_face_t`, **`temperature_t`** primary scalar, **`thermocline_t`** secondary), and `environmental_fiber_timeseries.npz` (shared `time_s` plus **empty** fiber-aligned arrays until CRS alignment is validated). The static-site environmental block renders scalars and flow in **model grid index space** (readable inspection heatmaps); it does not treat `XZ`/`YZ` as a geographic map until coordinate handling is validated.
 
 **Orca source-vs-DAS demo audio (optional, after `build_selected_channel_bundle.py`):**
 - `orca_source_segment.wav` — mono int16 WAV, experimental **Source** HDF5 segment aligned to `das_preprocessing_metadata.json` `selected_interval` (`start_time_s` / `end_time_s` on the DAS axis, resampled by sample index at source `Sample Rate (Hz)`).
@@ -126,6 +126,7 @@ The static viewer (`site/`) loads, per shot:
 5. **Selected-channel assets** — `selected_channels_index.json` + per-column NPZs, or legacy `selected_channel_*.npz` triple.
 6. **Orca demo audio** — when present, `orca_audio_compare.json` + `orca_source_segment.wav` for **inspection-only** playback in the selected-channel panel (Web Audio).
 7. **Events** — `events.json` for navigation chips and interval snapping.
+8. **Environmental MVP (optional)** — when present under `output/environmental/`, the static site (`site/app.js`) loads `environmental_mvp_meta.json` and `environmental_map_fields.npz` into a **model grid inspection** block (row/column index heatmaps and flow arrows aligned to that grid). This is **not** a final geographic lake overlay on `situation.json` / LV95 until CRS alignment is validated; `XZ`/`YZ` stay in the export for later use. See `environmental_mvp_meta.json` and `docs/environmental_data_audit.md`.
 
 **Interaction:** For multi-channel selected-channel shots, **map click near the fiber** can snap the selected-channel panel to the nearest **exported** channel (same state as the dropdown), when implemented in `site/app.js`.
 

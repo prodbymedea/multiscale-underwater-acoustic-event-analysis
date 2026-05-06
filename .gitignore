@@ -1,5 +1,6 @@
 # Virtual environments
 .venv/
+.venv_audit/
 venv/
 env/
 

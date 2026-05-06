@@ -1,6 +1,7 @@
 const SHOT_FALLBACK = ["whales_humpback", "whales_orca"];
 const OUTPUT_BASE_CANDIDATES = ["../output", "./data", "output"];
 const SAMPLE_BASE_CANDIDATES = ["../output_samples", "output_samples"];
+const ENV_BASE_CANDIDATES = ["../output/environmental", "./output/environmental", "output/environmental"];
 const MAP_TIMELINE_PLAY_SPEED_S = 120;
 const TRACK_PALETTE = ["#72f6ff", "#ff9f1c", "#9cff57", "#ffe66d", "#c9a0ff", "#ff7a59"];
 
@@ -56,7 +57,16 @@ const state = {
   mapPanLastRenderTs: 0,
   mapTimelinePlayFrame: 0,
   mapTimelineLastTickMs: 0,
-  lastStatusMessage: null
+  lastStatusMessage: null,
+  environmental: {
+    meta: null,
+    mapNpz: null,
+    fiberNpz: null,
+    layout: null,
+    timeIndex: 0,
+    sourceMetaUrl: null,
+    sourceMapUrl: null
+  }
 };
 
 const el = {
@@ -125,7 +135,20 @@ const el = {
   selchAudioHint: document.getElementById("selch-audio-hint"),
   selchPlayDasAudio: document.getElementById("selch-play-das-audio"),
   selchPlaySourceAudio: document.getElementById("selch-play-source-audio"),
-  selchStopAudio: document.getElementById("selch-stop-audio")
+  selchStopAudio: document.getElementById("selch-stop-audio"),
+  envUnavailable: document.getElementById("env-unavailable"),
+  envContent: document.getElementById("env-content"),
+  envCaveat: document.getElementById("env-caveat"),
+  envTimeSlider: document.getElementById("env-time-slider"),
+  envTimeLabel: document.getElementById("env-time-label"),
+  envPrev: document.getElementById("env-prev"),
+  envNext: document.getElementById("env-next"),
+  envThermoCanvas: document.getElementById("env-thermo-canvas"),
+  envFlowCanvas: document.getElementById("env-flow-canvas"),
+  envFiberNote: document.getElementById("env-fiber-note"),
+  envCaption: document.getElementById("env-caption"),
+  envStats: document.getElementById("env-stats"),
+  envScalarTitle: document.getElementById("env-scalar-title")
 };
 
 /** Selected-channel demo audio (Orca): stop before shot/channel change. */
@@ -733,6 +756,628 @@ function buildHydroActivityFromNpz(npz, scoreMetadata) {
     hydro.normalization.threshold_db = thresholdDb;
   }
   return hydro;
+}
+
+function npIndex2(shape, row, col, fortran) {
+  const M = shape[0];
+  const N = shape[1];
+  if (!fortran) {
+    return row * N + col;
+  }
+  return row + M * col;
+}
+
+function npIndex3(shape, t, row, col, fortran) {
+  const Nt = shape[0];
+  const M = shape[1];
+  const N = shape[2];
+  if (!fortran) {
+    return t * M * N + row * N + col;
+  }
+  return t + Nt * (row + M * col);
+}
+
+async function tryLoadEnvironmentalJson(fileName) {
+  for (const base of ENV_BASE_CANDIDATES) {
+    const url = `${base}/${fileName}`;
+    try {
+      const data = await fetchJson(url);
+      return { data, url };
+    } catch (_) {
+      /* next */
+    }
+  }
+  return { data: null, url: null };
+}
+
+async function tryLoadEnvironmentalNpz(fileName) {
+  for (const base of ENV_BASE_CANDIDATES) {
+    const url = `${base}/${fileName}`;
+    try {
+      const npz = await fetchNpz(url);
+      return { npz, url };
+    } catch (_) {
+      /* next */
+    }
+  }
+  return { npz: null, url: null };
+}
+
+function validateEnvironmentalMapNpz(npz) {
+  if (!npz) {
+    return null;
+  }
+  const required = ["XZ", "YZ", "time_s", "u_face_t", "v_face_t"];
+  for (const k of required) {
+    if (!npz[k]?.data || !npz[k]?.shape) {
+      return null;
+    }
+  }
+  const xz = npz.XZ;
+  if (xz.shape.length !== 2) {
+    return null;
+  }
+  const M = xz.shape[0];
+  const N = xz.shape[1];
+  if (npz.YZ.shape[0] !== M || npz.YZ.shape[1] !== N) {
+    return null;
+  }
+  let primaryScalarKey = null;
+  if (npz.temperature_t?.data && npz.temperature_t.shape?.length === 3) {
+    primaryScalarKey = "temperature_t";
+  } else if (npz.thermocline_t?.data && npz.thermocline_t.shape?.length === 3) {
+    primaryScalarKey = "thermocline_t";
+  } else {
+    return null;
+  }
+  const scalar = npz[primaryScalarKey];
+  const Nt = scalar.shape[0];
+  if (scalar.shape[1] !== M || scalar.shape[2] !== N) {
+    return null;
+  }
+  const u = npz.u_face_t;
+  const v = npz.v_face_t;
+  if (u.shape[0] !== Nt || u.shape[1] !== M || u.shape[2] !== N) {
+    return null;
+  }
+  if (v.shape[0] !== Nt || v.shape[1] !== M || v.shape[2] !== N) {
+    return null;
+  }
+  if (npz.time_s.data.length !== Nt) {
+    return null;
+  }
+  return {
+    M,
+    N,
+    Nt,
+    primaryScalarKey,
+    hasThermoclineSecondary: !!(npz.thermocline_t?.data && npz.thermocline_t.shape?.length === 3)
+  };
+}
+
+function environmentalFiberSeriesPending(npz) {
+  if (!npz?.u_ms?.shape || npz.u_ms.shape.length < 2) {
+    return true;
+  }
+  return npz.u_ms.shape[1] === 0;
+}
+
+function colorForEnvScalar01(t01) {
+  const v = clamp(t01, 0, 1);
+  const stops = [
+    [12, 18, 40],
+    [30, 70, 130],
+    [70, 160, 230],
+    [200, 230, 255],
+    [255, 220, 140]
+  ];
+  const scaled = v * (stops.length - 1);
+  const idx = Math.min(stops.length - 2, Math.floor(scaled));
+  const frac = scaled - idx;
+  const p = stops[idx];
+  const q = stops[idx + 1];
+  const r = Math.round(p[0] + (q[0] - p[0]) * frac);
+  const g = Math.round(p[1] + (q[1] - p[1]) * frac);
+  const b = Math.round(p[2] + (q[2] - p[2]) * frac);
+  return [r, g, b];
+}
+
+function colorForFlowSpeed01(t01) {
+  const v = clamp(t01, 0, 1);
+  const stops = [
+    [8, 12, 28],
+    [20, 40, 90],
+    [50, 120, 200],
+    [180, 230, 255]
+  ];
+  const scaled = v * (stops.length - 1);
+  const idx = Math.min(stops.length - 2, Math.floor(scaled));
+  const frac = scaled - idx;
+  const p = stops[idx];
+  const q = stops[idx + 1];
+  const r = Math.round(p[0] + (q[0] - p[0]) * frac);
+  const g = Math.round(p[1] + (q[1] - p[1]) * frac);
+  const b = Math.round(p[2] + (q[2] - p[2]) * frac);
+  return [r, g, b];
+}
+
+function fitEnvironmentalCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const wCss = Math.max(280, Math.floor(rect.width) || 920);
+  const hCss = Math.max(200, Math.floor(wCss * (300 / 920)));
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.floor(wCss * dpr);
+  canvas.height = Math.floor(hCss * dpr);
+  canvas.style.height = `${hCss}px`;
+  const ctx = canvas.getContext("2d");
+  if (ctx) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  return { ctx, w: wCss, h: hCss };
+}
+
+function computeScalarRangeForTime(npz, tIdx, layout, fieldKey) {
+  const sc = npz[fieldKey];
+  if (!sc?.data) {
+    return { lo: 0, hi: 1, sparse: true, count: 0 };
+  }
+  const { M, N } = layout;
+  const fort = !!sc.fortran;
+  const isTemp = fieldKey === "temperature_t";
+  const floorSpan = isTemp ? 0.08 : 0.5;
+  const vals = [];
+  for (let m = 0; m < M; m += 1) {
+    for (let n = 0; n < N; n += 1) {
+      const ix = npIndex3(sc.shape, tIdx, m, n, fort);
+      const v = sc.data[ix];
+      if (Number.isFinite(v)) {
+        vals.push(v);
+      }
+    }
+  }
+  vals.sort((a, b) => a - b);
+  if (vals.length === 0) {
+    return { lo: 0, hi: 1, sparse: true, count: 0 };
+  }
+  if (vals.length < 12) {
+    const lo0 = vals[0];
+    const hi0 = vals[vals.length - 1];
+    const span = Math.max(1e-4, hi0 - lo0, Math.abs(lo0) * 1e-6, floorSpan);
+    return {
+      lo: lo0 - 0.08 * span,
+      hi: hi0 + 0.08 * span,
+      sparse: true,
+      count: vals.length
+    };
+  }
+  const lo = quantileFromSorted(vals, 0.05);
+  const hi = quantileFromSorted(vals, 0.95);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
+    const lo0 = vals[0];
+    const hi0 = vals[vals.length - 1];
+    const span = Math.max(1e-4, hi0 - lo0, floorSpan);
+    return {
+      lo: lo0 - 0.05 * span,
+      hi: hi0 + 0.05 * span,
+      sparse: true,
+      count: vals.length
+    };
+  }
+  const sparseFrac = isTemp ? 0.35 : 0.02;
+  return { lo, hi, sparse: vals.length < M * N * sparseFrac, count: vals.length };
+}
+
+/** Plot area inside environmental canvases (room for captions above). */
+const ENV_GRID_LABEL_TOP = 40;
+const ENV_GRID_PAD = 16;
+
+function envGridPlotRect(canvasW, canvasH) {
+  const plotLeft = ENV_GRID_PAD;
+  const plotW = Math.max(10, canvasW - 2 * ENV_GRID_PAD);
+  const plotH = Math.max(10, canvasH - ENV_GRID_LABEL_TOP - ENV_GRID_PAD);
+  return { plotLeft, plotTop: ENV_GRID_LABEL_TOP, plotW, plotH };
+}
+
+function envGridCellCenterPx(m, n, M, N, rect) {
+  return {
+    px: rect.plotLeft + ((n + 0.5) / N) * rect.plotW,
+    py: rect.plotTop + ((m + 0.5) / M) * rect.plotH
+  };
+}
+
+function renderEnvironmentalPanels() {
+  const env = state.environmental;
+  if (!env.mapNpz || !env.layout || !el.envThermoCanvas || !el.envFlowCanvas) {
+    return;
+  }
+  const npz = env.mapNpz;
+  const { M, N, Nt } = env.layout;
+  const ti = clamp(env.timeIndex, 0, Nt - 1);
+  env.timeIndex = ti;
+
+  const fieldKey = env.layout.primaryScalarKey || "temperature_t";
+  const sc = npz[fieldKey];
+  const uu = npz.u_face_t;
+  const vv = npz.v_face_t;
+  const fort3 = !!sc.fortran;
+  const isTempScalar = fieldKey === "temperature_t";
+
+  const scalarRange = computeScalarRangeForTime(npz, ti, env.layout, fieldKey);
+  const tLo = scalarRange.lo;
+  const tHi = scalarRange.hi;
+  const spanT = Math.max(1e-4, tHi - tLo);
+
+  /* Primary scalar: M×N index-space heatmap (curvilinear XZ/YZ not used — avoids collapsed projection). */
+  const thermoFit = fitEnvironmentalCanvas(el.envThermoCanvas);
+  const tctx = thermoFit.ctx;
+  if (!tctx) {
+    return;
+  }
+  const tw = thermoFit.w;
+  const thh = thermoFit.h;
+  const sRect = envGridPlotRect(tw, thh);
+  tctx.fillStyle = "#070d18";
+  tctx.fillRect(0, 0, tw, thh);
+
+  const scImg = tctx.createImageData(N, M);
+  for (let m = 0; m < M; m += 1) {
+    for (let n = 0; n < N; n += 1) {
+      const ix = npIndex3(sc.shape, ti, m, n, fort3);
+      const v = sc.data[ix];
+      const o = (m * N + n) * 4;
+      if (!Number.isFinite(v)) {
+        scImg.data[o] = 45;
+        scImg.data[o + 1] = 48;
+        scImg.data[o + 2] = 58;
+        scImg.data[o + 3] = 255;
+      } else {
+        const rgb = colorForEnvScalar01((v - tLo) / spanT);
+        scImg.data[o] = rgb[0];
+        scImg.data[o + 1] = rgb[1];
+        scImg.data[o + 2] = rgb[2];
+        scImg.data[o + 3] = 255;
+      }
+    }
+  }
+  const scTmp = document.createElement("canvas");
+  scTmp.width = N;
+  scTmp.height = M;
+  const scTx = scTmp.getContext("2d");
+  if (scTx) {
+    scTx.putImageData(scImg, 0, 0);
+    tctx.imageSmoothingEnabled = false;
+    tctx.drawImage(scTmp, 0, 0, N, M, sRect.plotLeft, sRect.plotTop, sRect.plotW, sRect.plotH);
+  }
+
+  tctx.save();
+  tctx.strokeStyle = "rgba(180, 210, 255, 0.35)";
+  tctx.lineWidth = 1;
+  tctx.strokeRect(0.5, 0.5, tw - 1, thh - 1);
+  tctx.strokeStyle = "rgba(120, 160, 220, 0.45)";
+  tctx.strokeRect(sRect.plotLeft + 0.5, sRect.plotTop + 0.5, sRect.plotW - 1, sRect.plotH - 1);
+  tctx.fillStyle = "rgba(230, 240, 255, 0.85)";
+  tctx.font = "11px IBM Plex Mono, monospace";
+  tctx.fillText(
+    `Model grid indices: ${M} rows × ${N} cols (not LV95 map). XZ/YZ not used for layout.`,
+    8,
+    18
+  );
+  const tCount = scalarRange.count ?? 0;
+  const tFrac = (100 * tCount) / (M * N);
+  const tSparse = scalarRange.sparse ? "sparse " : "";
+  const scLabel = isTempScalar ? "Temperature R1 (°C nominal)" : "Thermocline depth (m)";
+  const scFmt = isTempScalar ? ((x) => x.toFixed(2)) : ((x) => x.toFixed(1));
+  tctx.fillText(
+    `${scLabel}; ${tSparse}scale ${scFmt(tLo)}…${scFmt(tHi)} (${tCount} finite, ${tFrac.toFixed(1)}% of cells)`,
+    8,
+    34
+  );
+  tctx.restore();
+
+  /* Flow: speed heatmap + quiver in the same index grid as the scalar. */
+  const flowFit = fitEnvironmentalCanvas(el.envFlowCanvas);
+  const fctx = flowFit.ctx;
+  if (!fctx) {
+    return;
+  }
+  const fw = flowFit.w;
+  const fh = flowFit.h;
+  const fRect = envGridPlotRect(fw, fh);
+  fctx.fillStyle = "#070d18";
+  fctx.fillRect(0, 0, fw, fh);
+
+  const speedsAll = [];
+  for (let m = 0; m < M; m += 1) {
+    for (let n = 0; n < N; n += 1) {
+      const iu = npIndex3(uu.shape, ti, m, n, !!uu.fortran);
+      const iv = npIndex3(vv.shape, ti, m, n, !!vv.fortran);
+      const u0 = uu.data[iu];
+      const v0 = vv.data[iv];
+      if (Number.isFinite(u0) && Number.isFinite(v0)) {
+        speedsAll.push(Math.hypot(u0, v0));
+      }
+    }
+  }
+  speedsAll.sort((a, b) => a - b);
+  const sLo = speedsAll.length ? quantileFromSorted(speedsAll, 0.08) : 0;
+  const sHi = speedsAll.length ? quantileFromSorted(speedsAll, 0.92) : 1;
+  const spanS = Math.max(1e-9, sHi - sLo);
+  const speedRefArrows =
+    speedsAll.length > 0
+      ? Math.max(quantileFromSorted(speedsAll, 0.88), 1e-6)
+      : 1;
+
+  const spImg = fctx.createImageData(N, M);
+  for (let m = 0; m < M; m += 1) {
+    for (let n = 0; n < N; n += 1) {
+      const iu = npIndex3(uu.shape, ti, m, n, !!uu.fortran);
+      const iv = npIndex3(vv.shape, ti, m, n, !!vv.fortran);
+      const u0 = uu.data[iu];
+      const v0 = vv.data[iv];
+      const o = (m * N + n) * 4;
+      if (!Number.isFinite(u0) || !Number.isFinite(v0)) {
+        spImg.data[o] = 30;
+        spImg.data[o + 1] = 35;
+        spImg.data[o + 2] = 50;
+        spImg.data[o + 3] = 255;
+      } else {
+        const sp = Math.hypot(u0, v0);
+        const rgb = colorForFlowSpeed01((sp - sLo) / spanS);
+        spImg.data[o] = rgb[0];
+        spImg.data[o + 1] = rgb[1];
+        spImg.data[o + 2] = rgb[2];
+        spImg.data[o + 3] = 255;
+      }
+    }
+  }
+  const spTmp = document.createElement("canvas");
+  spTmp.width = N;
+  spTmp.height = M;
+  const spTx = spTmp.getContext("2d");
+  if (spTx) {
+    spTx.putImageData(spImg, 0, 0);
+    fctx.imageSmoothingEnabled = false;
+    fctx.drawImage(spTmp, 0, 0, N, M, fRect.plotLeft, fRect.plotTop, fRect.plotW, fRect.plotH);
+  }
+
+  const strideM = Math.max(1, Math.floor(M / 28));
+  const strideN = Math.max(1, Math.floor(N / 14));
+  const samples = [];
+  for (let m = 0; m < M; m += strideM) {
+    for (let n = 0; n < N; n += strideN) {
+      const iu = npIndex3(uu.shape, ti, m, n, !!uu.fortran);
+      const iv = npIndex3(vv.shape, ti, m, n, !!vv.fortran);
+      const u0 = uu.data[iu];
+      const v0 = vv.data[iv];
+      if (!Number.isFinite(u0) || !Number.isFinite(v0)) {
+        continue;
+      }
+      const sp = Math.hypot(u0, v0);
+      const { px, py } = envGridCellCenterPx(m, n, M, N, fRect);
+      samples.push({ px, py, u0, v0, sp });
+    }
+  }
+  const arrowMax = 26;
+  fctx.strokeStyle = "rgba(255, 250, 220, 0.9)";
+  fctx.lineWidth = 1.25;
+  fctx.fillStyle = "rgba(255, 250, 220, 0.88)";
+  for (const s of samples) {
+    const len = Math.max(1.1, (s.sp / speedRefArrows) * arrowMax);
+    if (s.sp < 1e-9) {
+      continue;
+    }
+    const dx = (s.u0 / (s.sp || 1)) * len;
+    const dy = -(s.v0 / (s.sp || 1)) * len;
+    fctx.beginPath();
+    fctx.moveTo(s.px - dx * 0.5, s.py - dy * 0.5);
+    fctx.lineTo(s.px + dx * 0.5, s.py + dy * 0.5);
+    fctx.stroke();
+    const ah = 3.5;
+    const ang = Math.atan2(dy, dx);
+    const x2 = s.px + dx * 0.5;
+    const y2 = s.py + dy * 0.5;
+    fctx.beginPath();
+    fctx.moveTo(x2, y2);
+    fctx.lineTo(x2 - ah * Math.cos(ang - 0.45), y2 - ah * Math.sin(ang - 0.45));
+    fctx.lineTo(x2 - ah * Math.cos(ang + 0.45), y2 - ah * Math.sin(ang + 0.45));
+    fctx.closePath();
+    fctx.fill();
+  }
+
+  fctx.save();
+  fctx.strokeStyle = "rgba(180, 210, 255, 0.35)";
+  fctx.lineWidth = 1;
+  fctx.strokeRect(0.5, 0.5, fw - 1, fh - 1);
+  fctx.strokeStyle = "rgba(120, 160, 220, 0.45)";
+  fctx.strokeRect(fRect.plotLeft + 0.5, fRect.plotTop + 0.5, fRect.plotW - 1, fRect.plotH - 1);
+  fctx.fillStyle = "rgba(230, 240, 255, 0.85)";
+  fctx.font = "11px IBM Plex Mono, monospace";
+  fctx.fillText(
+    "Arrows: u east / v north (m/s) at cell centres in grid index space; length ∝ speed (subsampled).",
+    8,
+    18
+  );
+  fctx.fillText(
+    `Speed colour ~8–92%: ${sLo.toFixed(4)} … ${sHi.toFixed(4)} m/s; ref ${speedRefArrows.toFixed(4)} m/s — same M×N layout as scalar.`,
+    8,
+    34
+  );
+  fctx.restore();
+
+  if (el.envStats) {
+    const sq50 = speedsAll.length ? quantileFromSorted(speedsAll, 0.5) : 0;
+    const sq95 = speedsAll.length ? quantileFromSorted(speedsAll, 0.95) : 0;
+    const hint = env.meta?.viewer_hints;
+    const extra = hint?.default_time_index === ti && hint?.default_time_index_note
+      ? ` Default step from export: ${hint.default_time_index_note}`
+      : "";
+    const scShort = isTempScalar ? "temperature" : "thermocline";
+    const sec = env.layout.hasThermoclineSecondary && isTempScalar ? " thermocline_t also in bundle (sparse)." : "";
+    el.envStats.textContent =
+      `This timestep: ${scShort} ${tCount} finite cells (${tFrac.toFixed(1)}% of ${M}×${N}); ` +
+      `speed median ${sq50.toFixed(4)} m/s, 95th ${sq95.toFixed(4)} m/s.${sec}${extra}`;
+  }
+
+  if (el.envCaption) {
+    const proc = Array.isArray(env.meta?.processing) ? env.meta.processing.join(" ") : "";
+    el.envCaption.textContent = proc
+      ? `Backend notes: ${proc}`
+      : "Environmental MVP map fields loaded.";
+  }
+}
+
+function syncEnvironmentalTimeControls() {
+  const env = state.environmental;
+  if (!el.envTimeSlider || !env.layout) {
+    return;
+  }
+  const { Nt } = env.layout;
+  const maxI = Math.max(0, Nt - 1);
+  el.envTimeSlider.min = "0";
+  el.envTimeSlider.max = String(maxI);
+  el.envTimeSlider.step = "1";
+  env.timeIndex = clamp(env.timeIndex, 0, maxI);
+  el.envTimeSlider.value = String(env.timeIndex);
+  el.envTimeSlider.setAttribute("aria-valuemax", String(maxI));
+  el.envTimeSlider.setAttribute("aria-valuenow", String(env.timeIndex));
+  if (el.envTimeLabel && env.mapNpz?.time_s?.data) {
+    const ts = env.mapNpz.time_s.data[env.timeIndex];
+    if (Number.isFinite(ts)) {
+      const d = new Date(ts * 1000);
+      el.envTimeLabel.textContent = `Step ${env.timeIndex + 1} / ${Nt} — ${d.toISOString().replace("T", " ").replace(".000Z", " Z")}`;
+    } else {
+      el.envTimeLabel.textContent = `Step ${env.timeIndex + 1} / ${Nt}`;
+    }
+  }
+}
+
+function bindEnvironmentalPanelHandlers() {
+  if (!el.envTimeSlider) {
+    return;
+  }
+  const onStep = (delta) => {
+    const env = state.environmental;
+    if (!env.layout) {
+      return;
+    }
+    env.timeIndex = clamp(env.timeIndex + delta, 0, env.layout.Nt - 1);
+    syncEnvironmentalTimeControls();
+    renderEnvironmentalPanels();
+  };
+  el.envTimeSlider.addEventListener("input", () => {
+    const v = Number.parseInt(el.envTimeSlider.value, 10);
+    if (!Number.isFinite(v)) {
+      return;
+    }
+    state.environmental.timeIndex = v;
+    syncEnvironmentalTimeControls();
+    renderEnvironmentalPanels();
+  });
+  if (el.envPrev) {
+    el.envPrev.addEventListener("click", () => onStep(-1));
+  }
+  if (el.envNext) {
+    el.envNext.addEventListener("click", () => onStep(1));
+  }
+}
+
+async function loadEnvironmentalMvp() {
+  const env = state.environmental;
+  const metaRes = await tryLoadEnvironmentalJson("environmental_mvp_meta.json");
+  const mapRes = await tryLoadEnvironmentalNpz("environmental_map_fields.npz");
+  const fibRes = await tryLoadEnvironmentalNpz("environmental_fiber_timeseries.npz");
+
+  if (!metaRes.data || !mapRes.npz) {
+    env.meta = null;
+    env.mapNpz = null;
+    env.fiberNpz = fibRes.npz;
+    env.layout = null;
+    if (el.envUnavailable) {
+      el.envUnavailable.hidden = false;
+    }
+    if (el.envContent) {
+      el.envContent.hidden = true;
+    }
+    return;
+  }
+
+  const layout = validateEnvironmentalMapNpz(mapRes.npz);
+  if (!layout) {
+    env.meta = metaRes.data;
+    env.mapNpz = null;
+    env.layout = null;
+    if (el.envUnavailable) {
+      el.envUnavailable.hidden = false;
+      const p = el.envUnavailable.querySelector("p");
+      if (p) {
+        p.textContent =
+          "Environmental map bundle failed validation (unexpected array shapes). See console.";
+      }
+    }
+    if (el.envContent) {
+      el.envContent.hidden = true;
+    }
+    return;
+  }
+
+  env.meta = metaRes.data;
+  env.mapNpz = mapRes.npz;
+  env.fiberNpz = fibRes.npz;
+  env.layout = layout;
+  env.sourceMetaUrl = metaRes.url;
+  env.sourceMapUrl = mapRes.url;
+  env.timeIndex = 0;
+  const vh = metaRes.data.viewer_hints;
+  if (vh && Number.isFinite(Number(vh.default_time_index))) {
+    env.timeIndex = clamp(Math.floor(Number(vh.default_time_index)), 0, layout.Nt - 1);
+  }
+
+  if (el.envUnavailable) {
+    el.envUnavailable.hidden = true;
+  }
+  if (el.envContent) {
+    el.envContent.hidden = false;
+  }
+
+  const crs = metaRes.data.crs_and_alignment || {};
+  const alignStatus = crs.status || "unknown";
+  if (el.envCaveat) {
+    const bits = [
+      `CRS / alignment: ${alignStatus}.`,
+      crs.summary || "",
+      crs.overlay_feasibility || "",
+      vh?.temperature_note || "",
+      vh?.thermocline_note || "",
+      metaRes.data?.mvp_scalar?.rationale || "",
+      "These fields are for contextual inspection only; they do not prove causality with DAS bands or whale activity."
+    ];
+    el.envCaveat.textContent = bits.filter(Boolean).join(" ");
+  }
+
+  if (el.envScalarTitle) {
+    const pk = layout.primaryScalarKey;
+    const vk = vh?.temperature_r1_layer_k ?? metaRes.data?.variables?.temperature?.vertical_index_k;
+    if (pk === "temperature_t" && Number.isFinite(Number(vk))) {
+      el.envScalarTitle.textContent = `Temperature (R1, layer k=${vk}, °C nominal) — model grid indices`;
+    } else if (pk === "thermocline_t") {
+      el.envScalarTitle.textContent = "Thermocline depth (m; legacy export — often sparse) — model grid indices";
+    } else {
+      el.envScalarTitle.textContent = "Scalar field — model grid indices";
+    }
+  }
+
+  if (el.envFiberNote) {
+    if (environmentalFiberSeriesPending(fibRes.npz)) {
+      const ft = metaRes.data.fiber_timeseries || {};
+      el.envFiberNote.textContent =
+        `Along-fiber environmental profiles: ${ft.projection === "pending" ? "pending" : "unavailable"} — ${ft.reason || "No validated model↔LV95 transform in-repo."}`;
+    } else {
+      el.envFiberNote.textContent = "Along-fiber environmental series present (verify metadata before interpreting).";
+    }
+  }
+
+  syncEnvironmentalTimeControls();
+  renderEnvironmentalPanels();
 }
 
 async function attachMainPanelsFromNpzFallback(manifest, manifestUrl, bundle) {
@@ -3939,10 +4584,15 @@ function bindEvents() {
   bindMapTimelineHandlers();
   bindMapZoomButtonHandlers();
 
+  bindEnvironmentalPanelHandlers();
+
   window.addEventListener("resize", () => {
     if (state.shotBundle) {
       renderAllPanels();
       scheduleMapRender();
+    }
+    if (state.environmental?.mapNpz && state.environmental?.layout) {
+      renderEnvironmentalPanels();
     }
   });
 }
@@ -3970,6 +4620,22 @@ async function initialize() {
   if (state.shotOptions.length > 0) {
     el.shotSelect.value = state.shotOptions[0].shotId;
     await onShotChanged();
+  }
+
+  try {
+    await loadEnvironmentalMvp();
+  } catch (err) {
+    console.warn("Environmental MVP load failed:", err);
+    if (el.envUnavailable) {
+      el.envUnavailable.hidden = false;
+      const p = el.envUnavailable.querySelector("p");
+      if (p) {
+        p.textContent = `Environmental load error: ${summarizeError(err)}`;
+      }
+    }
+    if (el.envContent) {
+      el.envContent.hidden = true;
+    }
   }
 }
 

@@ -1375,6 +1375,175 @@ button:disabled {
   display: none;
 }
 
+/* Environmental MVP (model-frame inspection; not overlaid on LV95 map) */
+.panel-environmental {
+  margin-top: 0.35rem;
+  border-color: rgba(159, 216, 255, 0.28);
+  background: linear-gradient(180deg, rgba(8, 22, 38, 0.95), rgba(7, 16, 30, 0.92));
+}
+
+.env-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.panel-environmental h2 {
+  margin: 0;
+  font-size: 1.02rem;
+}
+
+.env-badge {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #9fd8ff;
+  border: 1px solid rgba(114, 246, 255, 0.35);
+  border-radius: 999px;
+  padding: 0.32rem 0.65rem;
+  background: rgba(114, 246, 255, 0.08);
+}
+
+.env-lead {
+  margin: 0.55rem 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  max-width: 85ch;
+}
+
+.env-lead code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.82em;
+  color: #c8ddff;
+}
+
+.env-unavailable {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 10px;
+  border: 1px dashed rgba(255, 230, 109, 0.35);
+  background: rgba(255, 230, 109, 0.06);
+  color: var(--ink-dim);
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.env-unavailable code {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8em;
+}
+
+.env-content {
+  margin-top: 0.65rem;
+}
+
+.env-caveat {
+  margin: 0 0 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 230, 109, 0.28);
+  background: rgba(10, 20, 36, 0.85);
+  color: #ffeab8;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.env-controls {
+  margin-bottom: 0.75rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  border: 1px solid rgba(114, 246, 255, 0.2);
+  background: rgba(6, 14, 28, 0.72);
+}
+
+.env-control-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+}
+
+.env-time-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.env-time-row input[type="range"] {
+  flex: 1 1 200px;
+  min-width: 140px;
+  accent-color: #72f6ff;
+}
+
+.env-step-btn {
+  padding: 0.3rem 0.55rem;
+  font-size: 0.78rem;
+  border-radius: 8px;
+}
+
+.env-time-label {
+  margin-top: 0.4rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.8rem;
+  color: #9fd8ff;
+}
+
+.env-stats {
+  margin: 0.45rem 0 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: #b8cce8;
+  max-width: 92ch;
+}
+
+.env-canvases {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.env-canvas-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.env-canvas-title {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.panel-environmental canvas {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: rgba(4, 10, 22, 0.9);
+  border: 1px solid rgba(114, 246, 255, 0.15);
+}
+
+.env-fiber-note {
+  margin: 0.55rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.env-caption {
+  margin-top: 0.35rem;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
