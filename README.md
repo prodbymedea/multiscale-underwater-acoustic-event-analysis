@@ -174,21 +174,19 @@ Writes `output/environmental/environmental_mvp_meta.json`, `environmental_map_fi
 The viewer in `site/` is pure static (no Vite, no npm, no backend). Browsers
 block `fetch()` over `file://`, so a plain HTTP server is required.
 
-**Canonical launch (always works, no symlinks needed):**
+**Canonical launch:**
 
 ```bash
 # from the repository root
-python -m http.server 8000
-# open http://localhost:8000/site/
-```
-
-An alternative launch from inside `site/` works **only** if your clone preserved
-the committed `site/output → ../output` and `site/output_samples → ../output_samples`
-symlinks (default on macOS/Linux, often missing on Windows clones):
-
-```bash
 python -m http.server 8000 --directory site
 # open http://localhost:8000/
+```
+
+If you instead serve from the repository root, the viewer is under `/site/`:
+
+```bash
+python -m http.server 8000
+# open http://localhost:8000/site/
 ```
 
 The frontend probes a small list of base URLs per asset kind and locks the

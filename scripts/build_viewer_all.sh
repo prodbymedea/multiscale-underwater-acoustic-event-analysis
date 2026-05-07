@@ -271,11 +271,11 @@ else
   echo "Build pipeline complete."
   if [[ "$SERVE" -eq 1 ]]; then
     echo "Starting viewer from repo root:"
-    echo "  http://localhost:$PORT/site/"
-    python3 -m http.server "$PORT"
+    echo "  http://localhost:$PORT/"
+    python3 -m http.server "$PORT" --directory site
   else
     echo "Start viewer from repo root:"
-    echo "  python3 -m http.server 8000"
-    echo "Open: http://localhost:8000/site/"
+    echo "  python3 -m http.server 8000 --directory site"
+    echo "Open: http://localhost:8000/"
   fi
 fi

@@ -7,7 +7,24 @@ This directory contains the frontend synchronized viewer for the thesis MVP scop
 The frontend is **pure static**: no Vite, no npm, no backend. It only needs a
 plain HTTP server (browsers refuse `fetch()` over `file://`).
 
-### Mode A — recommended (always works)
+### Mode A — recommended
+
+```bash
+# from the repository root
+python -m http.server 8000 --directory site
+# open http://localhost:8000/
+```
+
+This works because the repo commits two symlinks:
+
+- `site/output -> ../output`
+- `site/output_samples -> ../output_samples`
+
+If your clone preserved them (default on macOS/Linux with `core.symlinks=true`),
+the viewer can read generated local artifacts while the URL stays at the port
+root.
+
+### Mode B — repository root fallback
 
 ```bash
 # from the repository root
@@ -17,25 +34,9 @@ python -m http.server 8000
 
 In this mode the server's document root **is** the repository root, so the
 viewer can read `output/`, `output_samples/`, `figures/`, etc. directly. **No
-symlinks required.** This is the supported default.
-
-### Mode B — only with symlinks present
-
-```bash
-# from the repository root
-python -m http.server 8000 --directory site
-# open http://localhost:8000/
-```
-
-This works only because the repo commits two symlinks:
-
-- `site/output -> ../output`
-- `site/output_samples -> ../output_samples`
-
-If your clone preserved them (default on macOS/Linux with `core.symlinks=true`),
-Mode B is identical to Mode A. **On Windows, or any clone without symlinks,
-use Mode A.** `python -m http.server` rejects URL traversal above its root, so
-without the symlinks Mode B cannot reach the gitignored `output/` tree at all.
+symlinks required.**
+Use this fallback on Windows or any clone where the `site/output` symlinks are
+missing.
 
 ### Required folder structure
 
@@ -174,12 +175,12 @@ The UI shows **R1 temperature** (primary; nominal °C at layer **k** from export
 Run a static server from repository root:
 
 ```bash
-python -m http.server 8000
+python -m http.server 8000 --directory site
 ```
 
 Open:
 
-- `http://localhost:8000/site/`
+- `http://localhost:8000/`
 
 Avoid `file://` opening because browser fetch restrictions can block local JSON loading. For the environmental panel, the server must expose `output/environmental/` (run the exporter first).
 
