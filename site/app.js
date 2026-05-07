@@ -1,7 +1,171 @@
 const SHOT_FALLBACK = ["whales_humpback", "whales_orca"];
-const OUTPUT_BASE_CANDIDATES = ["../output", "./data", "output"];
-const SAMPLE_BASE_CANDIDATES = ["../output_samples", "output_samples"];
-const ENV_BASE_CANDIDATES = ["../output/environmental", "./output/environmental", "output/environmental"];
+
+/* ---------------------------------------------------------------------------
+ * Asset resolver
+ *
+ * The frontend is intentionally pure-static (no Vite, no npm, no backend).
+ * It must work under at least these `python -m http.server` modes:
+ *
+ *   A) From the repo root            (URL: /site/)
+ *      python -m http.server 8000
+ *      → relative "../output/foo"    resolves to /output/foo  ✓
+ *      → relative "output/foo"       resolves to /site/output/foo (committed
+ *                                     symlink site/output → ../output) ✓
+ *
+ *   B) From inside site/             (URL: /)
+ *      python -m http.server 8000 --directory site
+ *      → relative "../output/foo"    Python's SimpleHTTPRequestHandler strips
+ *                                     ".." segments → resolves to /output/foo;
+ *                                     served via committed symlink site/output ✓
+ *      → relative "output/foo"       resolves directly via the symlink       ✓
+ *
+ * Any path is therefore probed against an ordered list of bases. The first
+ * successful base for a given asset *kind* is locked in for subsequent loads
+ * (so we don't keep retrying ".." paths once we know they work).
+ *
+ * Diagnostics for every probe land on:
+ *   - console.debug for successes,
+ *   - console.warn for fallbacks,
+ *   - console.error for total failures,
+ *   - window.assetDiagnostics → { attempts, lockedBases, failures, summary() }
+ * ------------------------------------------------------------------------- */
+const ASSET_BASE_CANDIDATES = {
+  /* Full pipeline outputs (gitignored). */
+  output: ["../output", "./output", "output", "./data"],
+  /* Small JSON samples committed for fallback rendering. */
+  samples: ["../output_samples", "./output_samples", "output_samples"],
+  /* Environmental MVP exports (gitignored). */
+  env: [
+    "../output/environmental",
+    "./output/environmental",
+    "output/environmental"
+  ]
+};
+
+const assetResolver = {
+  lockedBases: { output: null, samples: null, env: null },
+  attempts: [],
+  failures: [],
+  summary() {
+    return {
+      lockedBases: { ...this.lockedBases },
+      attempts: this.attempts.slice(),
+      failures: this.failures.slice()
+    };
+  }
+};
+if (typeof window !== "undefined") {
+  window.assetDiagnostics = assetResolver;
+}
+
+function _assetCandidates(kind) {
+  const list = ASSET_BASE_CANDIDATES[kind];
+  if (!list) {
+    throw new Error(`Unknown asset kind: ${kind}`);
+  }
+  const locked = assetResolver.lockedBases[kind];
+  if (!locked) {
+    return list.slice();
+  }
+  return [locked, ...list.filter((b) => b !== locked)];
+}
+
+function _normalizeRel(rel) {
+  if (!rel) {
+    return "";
+  }
+  let r = String(rel).trim();
+  while (r.startsWith("/")) {
+    r = r.slice(1);
+  }
+  return r.replace(/^\.\//, "");
+}
+
+function _recordAttempt(kind, base, rel, ok, detail) {
+  const entry = { kind, base, rel, url: `${base}/${rel}`, ok, detail, t: Date.now() };
+  assetResolver.attempts.push(entry);
+  if (ok) {
+    if (!assetResolver.lockedBases[kind]) {
+      assetResolver.lockedBases[kind] = base;
+      console.info(`[asset:${kind}] base locked → ${base} (via ${rel})`);
+    }
+    console.debug(`[asset:${kind}] ${entry.url} OK`);
+  } else {
+    console.debug(`[asset:${kind}] ${entry.url} fail (${detail})`);
+  }
+}
+
+async function _probeJson(url) {
+  const response = await fetch(url, { cache: "no-cache" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function _probeArrayBuffer(url) {
+  const response = await fetch(url, { cache: "no-cache" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.arrayBuffer();
+}
+
+/**
+ * Try to load `relPath` against every candidate base for `kind` and return
+ * the first successful payload, plus the URL/base used.
+ *
+ * Always returns an object — never throws. Callers decide whether `null`
+ * data is fatal for their panel and surface a readable error.
+ */
+async function loadAssetJson(kind, relPath) {
+  const rel = _normalizeRel(relPath);
+  const tried = [];
+  for (const base of _assetCandidates(kind)) {
+    const url = `${base}/${rel}`;
+    try {
+      const data = await _probeJson(url);
+      _recordAttempt(kind, base, rel, true, "json");
+      return { data, url, base, tried };
+    } catch (err) {
+      const detail = String((err && err.message) || err);
+      _recordAttempt(kind, base, rel, false, detail);
+      tried.push({ url, error: detail });
+    }
+  }
+  const failure = { kind, rel, tried };
+  assetResolver.failures.push(failure);
+  console.warn(`[asset:${kind}] all candidates failed for ${rel}`, tried);
+  return { data: null, url: null, base: null, tried };
+}
+
+async function loadAssetNpz(kind, relPath) {
+  const rel = _normalizeRel(relPath);
+  const tried = [];
+  for (const base of _assetCandidates(kind)) {
+    const url = `${base}/${rel}`;
+    try {
+      const ab = await _probeArrayBuffer(url);
+      const npz = unzipNpzToArrays(ab);
+      _recordAttempt(kind, base, rel, true, "npz");
+      return { npz, url, base, tried };
+    } catch (err) {
+      const detail = String((err && err.message) || err);
+      _recordAttempt(kind, base, rel, false, detail);
+      tried.push({ url, error: detail });
+    }
+  }
+  const failure = { kind, rel, tried };
+  assetResolver.failures.push(failure);
+  console.warn(`[asset:${kind}] all candidates failed for ${rel}`, tried);
+  return { npz: null, url: null, base: null, tried };
+}
+
+/** Back-compat shims so existing code keeps working unchanged. */
+const OUTPUT_BASE_CANDIDATES = ASSET_BASE_CANDIDATES.output;
+const SAMPLE_BASE_CANDIDATES = ASSET_BASE_CANDIDATES.samples;
+const ENV_BASE_CANDIDATES = ASSET_BASE_CANDIDATES.env;
+
 const MAP_TIMELINE_PLAY_SPEED_S = 120;
 const TRACK_PALETTE = ["#72f6ff", "#ff9f1c", "#9cff57", "#ffe66d", "#c9a0ff", "#ff7a59"];
 
@@ -778,29 +942,13 @@ function npIndex3(shape, t, row, col, fortran) {
 }
 
 async function tryLoadEnvironmentalJson(fileName) {
-  for (const base of ENV_BASE_CANDIDATES) {
-    const url = `${base}/${fileName}`;
-    try {
-      const data = await fetchJson(url);
-      return { data, url };
-    } catch (_) {
-      /* next */
-    }
-  }
-  return { data: null, url: null };
+  const res = await loadAssetJson("env", fileName);
+  return { data: res.data, url: res.url, tried: res.tried };
 }
 
 async function tryLoadEnvironmentalNpz(fileName) {
-  for (const base of ENV_BASE_CANDIDATES) {
-    const url = `${base}/${fileName}`;
-    try {
-      const npz = await fetchNpz(url);
-      return { npz, url };
-    } catch (_) {
-      /* next */
-    }
-  }
-  return { npz: null, url: null };
+  const res = await loadAssetNpz("env", fileName);
+  return { npz: res.npz, url: res.url, tried: res.tried };
 }
 
 function validateEnvironmentalMapNpz(npz) {
@@ -1294,6 +1442,26 @@ async function loadEnvironmentalMvp() {
     env.layout = null;
     if (el.envUnavailable) {
       el.envUnavailable.hidden = false;
+      const p = el.envUnavailable.querySelector("p");
+      if (p) {
+        const missingBits = [];
+        if (!metaRes.data) {
+          missingBits.push("environmental_mvp_meta.json");
+        }
+        if (!mapRes.npz) {
+          missingBits.push("environmental_map_fields.npz");
+        }
+        const tried = [
+          ...(metaRes.tried || []),
+          ...(mapRes.tried || [])
+        ].map((t) => t.url);
+        const triedShort = Array.from(new Set(tried)).slice(0, 6).join(", ");
+        p.textContent =
+          `Environmental MVP files not found (${missingBits.join(", ")}). ` +
+          `Run "python src/export_environmental_mvp.py" from the repo root, ` +
+          `then serve the project per site/README.md. ` +
+          `Tried: ${triedShort}.`;
+      }
     }
     if (el.envContent) {
       el.envContent.hidden = true;
@@ -1500,16 +1668,32 @@ function quantileFromSorted(sortedValues, q) {
 }
 
 async function tryLoadJsonFromCandidates(relativePath, baseCandidates) {
+  /* Map legacy base lists back to the resolver's asset kinds so probes are
+   * logged consistently and the locked base is reused. */
+  let kind = null;
+  if (baseCandidates === ASSET_BASE_CANDIDATES.output || baseCandidates === OUTPUT_BASE_CANDIDATES) {
+    kind = "output";
+  } else if (baseCandidates === ASSET_BASE_CANDIDATES.samples || baseCandidates === SAMPLE_BASE_CANDIDATES) {
+    kind = "samples";
+  } else if (baseCandidates === ASSET_BASE_CANDIDATES.env || baseCandidates === ENV_BASE_CANDIDATES) {
+    kind = "env";
+  }
+  if (kind) {
+    const res = await loadAssetJson(kind, relativePath);
+    return { data: res.data, url: res.url, tried: res.tried };
+  }
+  /* Untracked base list: probe directly without locking. */
+  const tried = [];
   for (const base of baseCandidates) {
-    const url = `${base}/${relativePath}`;
+    const url = `${base}/${_normalizeRel(relativePath)}`;
     try {
-      const data = await fetchJson(url);
-      return { data, url };
-    } catch (_) {
-      // Continue trying other candidates.
+      const data = await _probeJson(url);
+      return { data, url, tried };
+    } catch (err) {
+      tried.push({ url, error: String((err && err.message) || err) });
     }
   }
-  return { data: null, url: null };
+  return { data: null, url: null, tried };
 }
 
 async function tryLoadJsonFromUrls(urls) {
@@ -3969,19 +4153,40 @@ function onGlobalPointerUp(event) {
 
 function getManifestCandidateUrls(shotOption) {
   const urls = [];
+  const seen = new Set();
+  const push = (u) => {
+    if (u && !seen.has(u)) {
+      seen.add(u);
+      urls.push(u);
+    }
+  };
+
+  /* Prefer the locked output base if we already discovered one. */
+  const locked = assetResolver.lockedBases.output;
+  const bases = locked
+    ? [locked, ...ASSET_BASE_CANDIDATES.output.filter((b) => b !== locked)]
+    : ASSET_BASE_CANDIDATES.output.slice();
 
   if (shotOption.manifestPath) {
     if (shotOption.manifestPath.startsWith("http")) {
-      urls.push(shotOption.manifestPath);
+      push(shotOption.manifestPath);
     } else {
-      OUTPUT_BASE_CANDIDATES.forEach((base) => {
-        urls.push(`${base}/${shotOption.manifestPath}`);
+      /* viewer_index lists e.g. "output/shots/<id>/viewer_manifest.json".
+       * That leading "output/" is doubled if naively joined with an output
+       * base. Try both with and without the prefix to stay robust. */
+      const rel = _normalizeRel(shotOption.manifestPath);
+      const stripped = rel.startsWith("output/") ? rel.slice("output/".length) : rel;
+      bases.forEach((base) => {
+        push(`${base}/${stripped}`);
+        if (stripped !== rel) {
+          push(`${base}/${rel}`);
+        }
       });
     }
   }
 
-  OUTPUT_BASE_CANDIDATES.forEach((base) => {
-    urls.push(`${base}/shots/${shotOption.shotId}/viewer_manifest.json`);
+  bases.forEach((base) => {
+    push(`${base}/shots/${shotOption.shotId}/viewer_manifest.json`);
   });
 
   return urls;
@@ -4273,7 +4478,22 @@ async function switchSelectedChannelToPreviewCol(previewCol) {
 
 async function loadManifestForShot(shotOption) {
   const candidates = getManifestCandidateUrls(shotOption);
-  return tryLoadJsonFromUrls(candidates);
+  const result = await tryLoadJsonFromUrls(candidates);
+  if (result.url && !assetResolver.lockedBases.output) {
+    /* Infer the output base from the manifest URL by stripping the
+     * "/shots/<id>/viewer_manifest.json" tail. */
+    const m = result.url.match(/^(.*)\/shots\/[^/]+\/viewer_manifest\.json$/);
+    if (m && m[1]) {
+      assetResolver.lockedBases.output = m[1];
+      console.info(`[asset:output] base locked → ${m[1]} (via manifest)`);
+    }
+  }
+  if (result.url) {
+    console.info(`[manifest] ${shotOption.shotId} loaded from ${result.url}`);
+  } else {
+    console.error(`[manifest] ${shotOption.shotId} failed; tried`, candidates);
+  }
+  return result;
 }
 
 async function loadBundleFromManifest(manifest, manifestUrl) {
@@ -4605,15 +4825,27 @@ async function initialize() {
   el.playbackStatus.textContent = "Cursor synced to selected interval; playback deferred to a later step.";
 
   updateDataStatus("Loading shot list from viewer index...");
+  console.info(
+    `[asset] page served from ${window.location.pathname}; probing bases`,
+    ASSET_BASE_CANDIDATES
+  );
   const indexLoad = await tryLoadJsonFromCandidates("viewer_index.json", OUTPUT_BASE_CANDIDATES);
 
   if (indexLoad.data) {
     state.shotOptions = parseIndexToShotOptions(indexLoad.data, indexLoad.url);
     updateDataStatus(`Loaded shot list from ${indexLoad.url}.`);
+    console.info(
+      `[asset] shots known: ${state.shotOptions.map((o) => o.shotId).join(", ") || "(none)"}`
+    );
   } else {
     state.indexSource = null;
     state.shotOptions = SHOT_FALLBACK.map((shotId) => ({ shotId, manifestPath: null }));
-    updateDataStatus("viewer_index.json not found. Using fallback shot list (whales_humpback, whales_orca).");
+    const triedShort = (indexLoad.tried || []).map((t) => t.url).slice(0, 4).join(", ");
+    updateDataStatus(
+      `viewer_index.json not found (tried: ${triedShort}). ` +
+      "Using fallback shot list (whales_humpback, whales_orca). " +
+      "Make sure output/ exists at the repo root and you started the server per site/README.md."
+    );
   }
 
   renderShotOptions();
@@ -4636,6 +4868,18 @@ async function initialize() {
     if (el.envContent) {
       el.envContent.hidden = true;
     }
+  }
+
+  /* Diagnostics summary so it is obvious which paths actually worked. */
+  const summary = assetResolver.summary();
+  console.info("[asset] locked bases", summary.lockedBases);
+  if (summary.failures.length > 0) {
+    console.warn(
+      `[asset] ${summary.failures.length} asset(s) had no candidate succeed:`,
+      summary.failures.map((f) => `${f.kind}/${f.rel}`)
+    );
+  } else {
+    console.info("[asset] all probed assets resolved.");
   }
 }
 

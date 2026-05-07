@@ -169,6 +169,33 @@ python src/export_environmental_mvp.py --time-stride 6 --space-stride 2
 
 Writes `output/environmental/environmental_mvp_meta.json`, `environmental_map_fields.npz`, and `environmental_fiber_timeseries.npz` (fiber-aligned arrays empty until model–LV95 alignment is solved). See `docs/environmental_data_audit.md`.
 
+## Local frontend (static viewer)
+
+The viewer in `site/` is pure static (no Vite, no npm, no backend). Browsers
+block `fetch()` over `file://`, so a plain HTTP server is required.
+
+**Canonical launch (always works, no symlinks needed):**
+
+```bash
+# from the repository root
+python -m http.server 8000
+# open http://localhost:8000/site/
+```
+
+An alternative launch from inside `site/` works **only** if your clone preserved
+the committed `site/output → ../output` and `site/output_samples → ../output_samples`
+symlinks (default on macOS/Linux, often missing on Windows clones):
+
+```bash
+python -m http.server 8000 --directory site
+# open http://localhost:8000/
+```
+
+The frontend probes a small list of base URLs per asset kind and locks the
+first one that works. Open DevTools → Console to see resolver attempts (`[asset:*]`
+log lines) and `window.assetDiagnostics` for live state. See `site/README.md`
+for the full layout, fallbacks, and required output paths.
+
 ## Planned GitHub Pages deployment
 
 - **Target:** publish the static content under **`site/`** (e.g. `index.html` and future assets) via [GitHub Pages](https://pages.github.com/) (branch/folder settings in the repo **Settings → Pages**).

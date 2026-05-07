@@ -2,6 +2,74 @@
 
 This directory contains the frontend synchronized viewer for the thesis MVP scope.
 
+## Local serving — canonical launch
+
+The frontend is **pure static**: no Vite, no npm, no backend. It only needs a
+plain HTTP server (browsers refuse `fetch()` over `file://`).
+
+### Mode A — recommended (always works)
+
+```bash
+# from the repository root
+python -m http.server 8000
+# open http://localhost:8000/site/
+```
+
+In this mode the server's document root **is** the repository root, so the
+viewer can read `output/`, `output_samples/`, `figures/`, etc. directly. **No
+symlinks required.** This is the supported default.
+
+### Mode B — only with symlinks present
+
+```bash
+# from the repository root
+python -m http.server 8000 --directory site
+# open http://localhost:8000/
+```
+
+This works only because the repo commits two symlinks:
+
+- `site/output -> ../output`
+- `site/output_samples -> ../output_samples`
+
+If your clone preserved them (default on macOS/Linux with `core.symlinks=true`),
+Mode B is identical to Mode A. **On Windows, or any clone without symlinks,
+use Mode A.** `python -m http.server` rejects URL traversal above its root, so
+without the symlinks Mode B cannot reach the gitignored `output/` tree at all.
+
+### Required folder structure
+
+Working copy must contain (next to the repo root):
+
+```
+output/                            # gitignored; create with the Python pipeline
+  viewer_index.json
+  shots/whales_humpback/...        # viewer_manifest.json + JSON/NPZ exports
+  shots/whales_orca/...
+  environmental/                   # optional, for the environmental panel
+    environmental_mvp_meta.json
+    environmental_map_fields.npz
+output_samples/shots/.../*.json    # tiny fallback samples (committed)
+site/                              # this directory (with the symlinks above)
+```
+
+If `output/` is missing the viewer falls back to the `output_samples/` JSONs and
+shows a readable status; per-panel errors list the URLs that were tried.
+
+### Asset resolver and diagnostics
+
+`site/app.js` probes a small ordered list of base URLs for every asset kind
+(`output`, `samples`, `env`) and **locks the first base that succeeds** for the
+session, so subsequent loads are direct. Open DevTools → Console to see:
+
+- `[asset:output] base locked → ../output (via viewer_index.json)`
+- `[asset] locked bases { output, samples, env }`
+- per-asset `OK` / `fail (...)` lines
+- a final list of any unresolved assets
+
+The resolver state is also live on `window.assetDiagnostics` for ad-hoc
+inspection (e.g. `assetDiagnostics.summary()` in the console).
+
 ## Current contents
 
 - `index.html`: existing layout with synchronized render containers.
