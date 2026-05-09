@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lake Zurich GIS Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="environmental-dashboard.css" />
+  </head>
+  <body>
+    <main class="envdash" aria-label="Lake Zurich interactive GIS dashboard">
+      <div id="envdash-leaflet" aria-label="Interactive CARTO Dark Matter map centered on Lake Zurich"></div>
+
+      <a class="envdash-back" href="./" aria-label="Back to main viewer">
+        <span class="back-icon" aria-hidden="true"></span>
+        <span>Back</span>
+      </a>
+
+      <div class="envdash-zoom" aria-label="Map zoom controls">
+        <button type="button" id="envdash-zoom-in" aria-label="Zoom in">+</button>
+        <button type="button" id="envdash-zoom-out" aria-label="Zoom out">−</button>
+        <button type="button" id="envdash-zoom-reset" aria-label="Reset to Lake Zurich">↺</button>
+      </div>
+
+      <aside class="envdash-side-panel" aria-label="Map controls panel">
+        <div class="side-panel-head">
+          <div>
+            <span class="panel-eyebrow">Lake Model</span>
+            <h1>Model Settings</h1>
+          </div>
+        </div>
+
+        <section class="settings-card" aria-label="Model settings">
+          <div class="settings-card-title">
+            <span class="settings-card-kicker">Context</span>
+            <span class="settings-card-note">3D fields</span>
+          </div>
+          <div class="settings-grid">
+            <div class="settings-field">
+              <label>Model</label>
+              <div class="info-tile">
+                <strong>Delft3D-FLOW</strong>
+                <span>Hydrodynamic simulation</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-field settings-wide">
+            <label>Period</label>
+            <div class="period-tile">
+              <span>UTC window</span>
+              <strong id="env-period-value">Loading model period...</strong>
+            </div>
+          </div>
+
+          <div class="settings-field settings-wide">
+            <label>Depth</label>
+            <div class="depth-panel">
+              <div class="depth-summary">
+                <span>Current layer</span>
+                <strong id="env-depth-value">0.9 m</strong>
+              </div>
+              <input id="env-depth-slider" class="depth-slider" type="range" min="0" max="0" value="0" step="1" aria-label="Depth" />
+              <div class="depth-limits">
+                <span>0.05 m</span>
+                <span>135.5 m</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-card compact layer-card" aria-label="Layer settings">
+          <h2>Layers</h2>
+          <div class="layer-control">
+            <div>
+              <strong>Currents</strong>
+              <label>Color</label>
+              <input id="arrow-color-picker" class="layer-color-picker" type="color" value="#141414" aria-label="Arrow colour" />
+            </div>
+            <button type="button" id="side-current-toggle" class="layer-toggle on" aria-pressed="true" aria-label="Toggle current arrows"></button>
+          </div>
+          <div class="layer-control">
+            <div>
+              <strong>Streamlines</strong>
+            </div>
+            <button type="button" id="side-streamline-toggle" class="layer-toggle" aria-pressed="false" aria-label="Toggle streamline streaks"></button>
+          </div>
+          <div id="streamline-options" class="layer-control streamline-expanded" style="display: none;">
+            <div>
+              <label>Color</label>
+              <input id="streamline-color-picker" class="layer-color-picker" type="color" value="#eef2f8" aria-label="Streamline colour" />
+            </div>
+          </div>
+          <div id="streamline-speed-control" class="layer-control" style="display: none;">
+            <div>
+              <label for="streamline-speed">Streamline Speed</label>
+              <input id="streamline-speed" class="depth-slider" type="range" min="0" max="300" step="5" value="100" aria-label="Streamline speed multiplier" />
+              <span id="streamline-speed-value" style="font-size: 0.8rem; color: var(--muted);">x1.00</span>
+            </div>
+          </div>
+
+          <div class="layer-control">
+            <div>
+              <label for="temp-opacity">Temperature Opacity</label>
+              <input id="temp-opacity" class="depth-slider" type="range" min="0" max="100" step="1" value="100" aria-label="Temperature opacity" />
+              <span id="temp-opacity-value" style="font-size: 0.8rem; color: var(--muted);">100%</span>
+            </div>
+          </div>
+          <div class="layer-control">
+            <div>
+              <label for="arrow-size">Arrow Size</label>
+              <input id="arrow-size" class="depth-slider" type="range" min="8" max="40" step="2" value="22" aria-label="Arrow size" />
+              <span id="arrow-size-value" style="font-size: 0.8rem; color: var(--muted);">22px</span>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <div class="envdash-legend" aria-label="Temperature colour scale">
+        <span id="legend-min">–</span>
+        <div class="legend-ramp"></div>
+        <strong>Temperature</strong>
+        <span id="legend-max">–</span>
+      </div>
+
+      <section class="envdash-timeline" aria-label="Model timeline">
+        <button type="button" id="envdash-play" class="envdash-play" aria-pressed="false" aria-label="Play model animation">▶</button>
+        <input id="envdash-time" type="range" min="0" max="0" value="0" step="1" />
+        <output id="envdash-time-label">Loading model time…</output>
+      </section>
+
+      <div id="envdash-status" class="envdash-status">Loading CARTO Dark Matter tiles…</div>
+    </main>
+
+    <script src="vendor/fflate.min.js"></script>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="environmental-dashboard.js"></script>
+  </body>
+</html>

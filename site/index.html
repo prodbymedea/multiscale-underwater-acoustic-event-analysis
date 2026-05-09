@@ -25,12 +25,12 @@
 
     <main class="app-shell">
       <section class="control-bar" aria-label="Viewer controls">
-        <div class="control-group">
+        <div class="control-group shot-control-group">
           <label for="shot-select">Shot</label>
           <select id="shot-select" aria-label="Select shot"></select>
         </div>
 
-        <div class="control-group interval-group">
+        <div class="control-hidden" aria-hidden="true">
           <label>Interval (seconds)</label>
           <div class="interval-inputs">
             <label for="interval-start" class="sr-only">Interval start</label>
@@ -45,7 +45,7 @@
           </div>
         </div>
 
-        <div class="control-group playback-group">
+        <div class="control-hidden" aria-hidden="true">
           <label>Cursor State</label>
           <div class="playback-controls">
             <button id="play-btn" type="button">Play</button>
@@ -53,6 +53,22 @@
             <span id="playback-status" class="playback-status">Idle</span>
           </div>
         </div>
+
+        <div class="control-group dashboard-link-group">
+          <label>Environmental</label>
+          <a class="dashboard-link-btn" href="environmental-dashboard.html" aria-label="Open environmental dashboard">
+            <span class="dashboard-link-icon" aria-hidden="true">
+              <span class="dashboard-map-fold"></span>
+              <span class="dashboard-map-pin"></span>
+            </span>
+            <span class="dashboard-link-copy">
+              <strong>Environment</strong>
+              <span>Open Lake Zurich dashboard</span>
+            </span>
+            <span class="dashboard-link-arrow" aria-hidden="true">›</span>
+          </a>
+        </div>
+
       </section>
 
       <section class="layout-grid" aria-label="Main visualization layout">
@@ -190,100 +206,16 @@
         </article>
 
         <article class="panel panel-das" aria-labelledby="das-heading">
-          <h2 id="das-heading">DAS Activity View</h2>
+          <div class="panel-title-row">
+            <h2 id="das-heading">DAS Waterfall</h2>
+          </div>
           <div id="das-view" class="panel-placeholder">
-            <canvas id="das-canvas" width="1200" height="420" aria-label="DAS activity overview heatmap"></canvas>
-            <p id="das-caption" class="panel-caption">Waiting for DAS activity context layer...</p>
+            <canvas id="das-canvas" width="1200" height="420" aria-label="DAS waterfall heatmap"></canvas>
+            <p id="das-caption" class="panel-caption">Waiting for DAS waterfall preview...</p>
           </div>
         </article>
-
-        <aside class="panel panel-sidebar" aria-labelledby="meta-heading">
-          <h2 id="meta-heading">Shot & Event Summary</h2>
-          <dl class="meta-list">
-            <div>
-              <dt>Selected shot</dt>
-              <dd id="meta-shot">-</dd>
-            </div>
-            <div>
-              <dt>Available time range</dt>
-              <dd id="meta-time-range">-</dd>
-            </div>
-            <div>
-              <dt>Recommended interval</dt>
-              <dd id="meta-recommended">-</dd>
-            </div>
-            <div>
-              <dt>Current interval</dt>
-              <dd id="meta-current-interval">-</dd>
-            </div>
-            <div>
-              <dt>Event count</dt>
-              <dd id="meta-event-count">-</dd>
-            </div>
-            <div>
-              <dt>Active event</dt>
-              <dd id="meta-active-event">None</dd>
-            </div>
-            <div>
-              <dt>Source ground truth</dt>
-              <dd id="meta-ground-truth">-</dd>
-            </div>
-            <div>
-              <dt>Event navigation</dt>
-              <dd>
-                <div id="event-nav" class="event-nav"></div>
-              </dd>
-            </div>
-          </dl>
-          <p id="data-status" class="data-status">
-            Loading viewer metadata...
-          </p>
-        </aside>
       </section>
 
-      <section class="panel panel-environmental" aria-labelledby="env-heading">
-        <div class="env-head">
-          <h2 id="env-heading">Environmental context (model grid)</h2>
-          <span class="env-badge">Grid inspection · not geographic overlay</span>
-        </div>
-        <p id="env-lead" class="env-lead">
-          Shown on model grid indices (rows &times; columns), not LV95 map coordinates.
-          Geographic overlay and lake-shape rendering can be added later after validated coordinate handling.
-          Exports still include <code>XZ</code>/<code>YZ</code> for future use; this panel does not use them for layout.
-        </p>
-        <div id="env-unavailable" class="env-unavailable" hidden>
-          <p>
-            No environmental MVP files found at <code>output/environmental/</code>. From the repo root, run
-            <code>python src/export_environmental_mvp.py</code>, then open this page via a local server
-            (e.g. <code>python -m http.server</code> from the project root, URL <code>/site/</code>).
-          </p>
-        </div>
-        <div id="env-content" class="env-content" hidden>
-          <p id="env-caveat" class="env-caveat" role="note"></p>
-          <div class="env-controls">
-            <label for="env-time-slider" class="env-control-label">Model time step</label>
-            <div class="env-time-row">
-              <button type="button" id="env-prev" class="env-step-btn">&larr; Prev</button>
-              <input id="env-time-slider" type="range" min="0" max="0" value="0" step="1" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" />
-              <button type="button" id="env-next" class="env-step-btn">Next &rarr;</button>
-            </div>
-            <div id="env-time-label" class="env-time-label" aria-live="polite"></div>
-            <p id="env-stats" class="env-stats" aria-live="polite"></p>
-          </div>
-          <div class="env-canvases">
-            <div class="env-canvas-block">
-              <span class="env-canvas-title" id="env-scalar-title">Scalar field (model grid)</span>
-              <canvas id="env-thermo-canvas" width="920" height="300" aria-label="Environmental scalar heatmap on model grid row and column indices"></canvas>
-            </div>
-            <div class="env-canvas-block">
-              <span class="env-canvas-title">Horizontal flow on model grid (u east / v north, arrows over speed)</span>
-              <canvas id="env-flow-canvas" width="920" height="300" aria-label="Flow speed heatmap and velocity arrows on model grid indices"></canvas>
-            </div>
-          </div>
-          <p id="env-fiber-note" class="env-fiber-note"></p>
-          <p id="env-caption" class="panel-caption"></p>
-        </div>
-      </section>
   </main>
 
   <div id="hover-tooltip" class="hover-tooltip" aria-hidden="true"></div>

@@ -47,9 +47,6 @@ output/                            # gitignored; create with the Python pipeline
   viewer_index.json
   shots/whales_humpback/...        # viewer_manifest.json + JSON/NPZ exports
   shots/whales_orca/...
-  environmental/                   # optional, for the environmental panel
-    environmental_mvp_meta.json
-    environmental_map_fields.npz
 output_samples/shots/.../*.json    # tiny fallback samples (committed)
 site/                              # this directory (with the symlinks above)
 ```
@@ -82,8 +79,11 @@ inspection (e.g. `assetDiagnostics.summary()` in the console).
 
 The same selected interval (`start` / `end`) now drives all three panels:
 
-- DAS activity view (primary panel):
+- DAS context panel:
 	- renders `viewer/das_activity.json` heatmap when available,
+	- provides an **Activity / Waterfall** toggle,
+	- **Activity** is the processed aggregated DAS activity map (`das_activity_map.npz` fallback),
+	- **Waterfall** uses `das_waterfall_preview.npz` when available: teacher-style native raw DAS counts, first 30k raw samples by default, all channels, sample index on x, channel index on y, and diverging amplitude color; it falls back to `das_preprocessed_preview.npz` only when the raw waterfall artifact is missing,
 	- shows shared interval and shared playback cursor,
 	- falls back to metadata mode when DAS export is unavailable.
 - Hydrophone support view:
@@ -143,6 +143,7 @@ For each selected shot, frontend attempts to load:
 - `../output/shots/<shot_id>/viewer_manifest.json`
 - files listed in manifest (`shot_metadata`, `recorders_summary`, `events`, `hydrophone_activity`, `das_activity`, `situation`)
 - if `viewer/das_activity.json` / `hydrophone_activity.json` are absent, the viewer falls back to `das_activity_map.npz` and `hydrophone_event_score.npz` in the shot directory (plus optional `hydrophone_event_score_metadata.json` for the threshold line)
+- `files.das_waterfall_preview` when present, currently `das_waterfall_preview.npz`; if it is missing, Waterfall mode falls back to `das_preprocessed_preview.npz` and otherwise shows “Waterfall preview not available. Run backend export.”
 - optional selected-channel NPZs when present (see `selected_channel_demo` in the manifest)
 
 ### Fallback mode
@@ -159,16 +160,8 @@ Fallback mode keeps synchronized interval/events but uses metadata-driven placeh
 
 - Selected-channel `.npz` parsing supports the dtypes used in current exports (`float32` time series, `uint8` mask, etc.); exotic dtypes may require extending `parseNpyArrayBuffer`.
 - DAS activity and hydro **main** panels can use JSON compatibility exports when present, with NPZ fallback (`das_activity_map.npz`, `hydrophone_event_score.npz`) when JSON is absent.
+- DAS Waterfall mode is an interpretable cable-wide context view, not whale detection. It uses symmetric robust clipping (2nd/98th percentile by visible interval) so broad channel structure and red/blue amplitude deviations remain visible without letting outliers dominate.
 - Map panel currently renders lightweight source/recorder context, not full bathymetry/fiber-track geometry rendering.
-
-## Environmental MVP panel (model grid inspection)
-
-Below the main synchronized viewer, **Environmental context (model grid)** loads optional artifacts from **`output/environmental/`** (same paths as the backend exporter):
-
-- `environmental_mvp_meta.json` — caveats, CRS/alignment status, variable notes
-- `environmental_map_fields.npz` — `XZ`/`YZ`, `time_s`, `thermocline_t`, `u_face_t`, `v_face_t` (via `fflate` + existing NPY parser)
-
-The UI shows **R1 temperature** (primary; nominal °C at layer **k** from export metadata) and horizontal flow (speed heatmap + arrows) as a regular **M×N index-space** heatmap: row and column indices, not a georeferenced lake map. **`XZ`/`YZ`** remain in the bundle for future geographic rendering but are **not** used for canvas layout (avoids broken projection on curvilinear grids). **`thermocline_t`** may still be in the NPZ as a sparse secondary field — the panel prioritizes temperature for coverage. It does **not** overlay these fields on the LV95 fiber map; along-fiber series stay a **pending** note until a validated transform exists. If the folder is missing, the section explains how to run `python src/export_environmental_mvp.py` and serve from the repo root.
 
 ## Local testing
 
@@ -182,7 +175,7 @@ Open:
 
 - `http://localhost:8000/`
 
-Avoid `file://` opening because browser fetch restrictions can block local JSON loading. For the environmental panel, the server must expose `output/environmental/` (run the exporter first).
+Avoid `file://` opening because browser fetch restrictions can block local JSON loading.
 
 ## Scope notes
 

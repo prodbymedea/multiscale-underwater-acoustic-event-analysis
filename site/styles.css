@@ -103,7 +103,7 @@ body {
 
 .control-bar {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(18rem, 1fr) minmax(16rem, 0.62fr);
   gap: 0.9rem;
   margin-bottom: 0.9rem;
 }
@@ -121,6 +121,22 @@ body {
   margin-bottom: 0.45rem;
   color: var(--ink-dim);
   font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.control-hidden {
+  display: none;
+}
+
+.shot-control-group {
+  min-height: 6.4rem;
+}
+
+.shot-control-group select {
+  min-height: 3rem;
+  padding: 0.62rem 0.8rem;
+  border-radius: 10px;
+  font-size: 1rem;
   font-weight: 600;
 }
 
@@ -179,6 +195,106 @@ button:focus-visible {
   gap: 0.45rem;
 }
 
+.dashboard-link-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.72rem;
+  width: 100%;
+  min-height: 3.75rem;
+  border: 1px solid rgba(114, 246, 255, 0.3);
+  border-radius: 999px;
+  padding: 0.48rem 0.72rem 0.48rem 0.5rem;
+  color: var(--ink);
+  background:
+    linear-gradient(90deg, rgba(114, 246, 255, 0.18), rgba(255, 79, 216, 0.1)),
+    rgba(8, 15, 31, 0.9);
+  text-decoration: none;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(239, 247, 255, 0.1), 0 10px 28px rgba(0, 0, 0, 0.22);
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
+}
+
+.dashboard-link-btn:hover,
+.dashboard-link-btn:focus-visible {
+  border-color: rgba(114, 246, 255, 0.62);
+  box-shadow: inset 0 1px 0 rgba(239, 247, 255, 0.16), 0 14px 36px rgba(0, 0, 0, 0.3), 0 0 0 2px rgba(114, 246, 255, 0.1);
+  transform: translateY(-1px);
+}
+
+.dashboard-link-icon {
+  position: relative;
+  flex: 0 0 auto;
+  width: 2.65rem;
+  height: 2.65rem;
+  border: 1px solid rgba(114, 246, 255, 0.36);
+  border-radius: 0.72rem;
+  background:
+    linear-gradient(90deg, transparent 31%, rgba(4, 10, 22, 0.34) 31% 34%, transparent 34% 64%, rgba(4, 10, 22, 0.34) 64% 67%, transparent 67%),
+    linear-gradient(135deg, rgba(114, 246, 255, 0.34), rgba(156, 255, 87, 0.16)),
+    rgba(5, 12, 24, 0.72);
+  box-shadow: inset 0 0 18px rgba(114, 246, 255, 0.16);
+  overflow: hidden;
+}
+
+.dashboard-map-fold {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(150deg, transparent 0 39%, rgba(255, 255, 255, 0.15) 40% 41%, transparent 42%),
+    linear-gradient(30deg, transparent 0 51%, rgba(255, 255, 255, 0.1) 52% 53%, transparent 54%);
+}
+
+.dashboard-map-pin {
+  position: absolute;
+  left: 50%;
+  top: 48%;
+  width: 0.82rem;
+  height: 0.82rem;
+  border: 2px solid rgba(255, 255, 255, 0.94);
+  border-radius: 50% 50% 50% 0;
+  background: #ff4fd8;
+  box-shadow: 0 0 0 3px rgba(255, 79, 216, 0.16);
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.dashboard-map-pin::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0.22rem;
+  height: 0.22rem;
+  border-radius: 50%;
+  background: #72f6ff;
+  transform: translate(-50%, -50%);
+}
+
+.dashboard-link-copy {
+  display: grid;
+  gap: 0.16rem;
+  min-width: 0;
+}
+
+.dashboard-link-copy strong {
+  color: #f3fbff;
+  font-size: 0.92rem;
+  line-height: 1.1;
+}
+
+.dashboard-link-copy span {
+  color: var(--ink-dim);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.dashboard-link-arrow {
+  flex: 0 0 auto;
+  color: #72f6ff;
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
 button {
   border: 1px solid rgba(114, 246, 255, 0.28);
   border-radius: 8px;
@@ -228,12 +344,12 @@ button:disabled {
 .layout-grid {
   display: grid;
   gap: 0.95rem;
-  grid-template-columns: minmax(0, 1.6fr) minmax(18rem, 0.9fr);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
-    "map map"
-    "selch selch"
-    "das sidebar"
-    "hydro hydro";
+    "map"
+    "selch"
+    "das"
+    "hydro";
   align-items: start;
 }
 
@@ -805,8 +921,50 @@ button:disabled {
   box-shadow: 0 0 0 1px rgba(114, 246, 255, 0.12), var(--shadow);
 }
 
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
 .panel-das h2 {
   color: var(--ink);
+}
+
+.das-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.15rem;
+  border: 1px solid rgba(114, 246, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(4, 10, 22, 0.72);
+}
+
+.das-mode-btn {
+  min-width: 5.7rem;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.42rem 0.62rem;
+  color: var(--ink-dim);
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.das-mode-btn:hover,
+.das-mode-btn:focus-visible {
+  color: var(--ink);
+  outline: 1px solid rgba(114, 246, 255, 0.52);
+  outline-offset: 1px;
+}
+
+.das-mode-btn.active {
+  color: #06101d;
+  background: #72f6ff;
 }
 
 .panel-das .panel-placeholder {
@@ -830,7 +988,7 @@ button:disabled {
   width: 100%;
   flex: none;
   min-height: 280px;
-  height: 320px;
+  height: 420px;
 }
 
 #hydro-svg {
@@ -1375,175 +1533,6 @@ button:disabled {
   display: none;
 }
 
-/* Environmental MVP (model-frame inspection; not overlaid on LV95 map) */
-.panel-environmental {
-  margin-top: 0.35rem;
-  border-color: rgba(159, 216, 255, 0.28);
-  background: linear-gradient(180deg, rgba(8, 22, 38, 0.95), rgba(7, 16, 30, 0.92));
-}
-
-.env-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.6rem;
-}
-
-.panel-environmental h2 {
-  margin: 0;
-  font-size: 1.02rem;
-}
-
-.env-badge {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: #9fd8ff;
-  border: 1px solid rgba(114, 246, 255, 0.35);
-  border-radius: 999px;
-  padding: 0.32rem 0.65rem;
-  background: rgba(114, 246, 255, 0.08);
-}
-
-.env-lead {
-  margin: 0.55rem 0 0;
-  color: var(--muted);
-  font-size: 0.84rem;
-  line-height: 1.45;
-  max-width: 85ch;
-}
-
-.env-lead code {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.82em;
-  color: #c8ddff;
-}
-
-.env-unavailable {
-  margin-top: 0.75rem;
-  padding: 0.75rem 0.85rem;
-  border-radius: 10px;
-  border: 1px dashed rgba(255, 230, 109, 0.35);
-  background: rgba(255, 230, 109, 0.06);
-  color: var(--ink-dim);
-  font-size: 0.84rem;
-  line-height: 1.45;
-}
-
-.env-unavailable code {
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.8em;
-}
-
-.env-content {
-  margin-top: 0.65rem;
-}
-
-.env-caveat {
-  margin: 0 0 0.65rem;
-  padding: 0.55rem 0.65rem;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 230, 109, 0.28);
-  background: rgba(10, 20, 36, 0.85);
-  color: #ffeab8;
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.env-controls {
-  margin-bottom: 0.75rem;
-  padding: 0.55rem 0.65rem;
-  border-radius: 10px;
-  border: 1px solid rgba(114, 246, 255, 0.2);
-  background: rgba(6, 14, 28, 0.72);
-}
-
-.env-control-label {
-  display: block;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 0.35rem;
-}
-
-.env-time-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-}
-
-.env-time-row input[type="range"] {
-  flex: 1 1 200px;
-  min-width: 140px;
-  accent-color: #72f6ff;
-}
-
-.env-step-btn {
-  padding: 0.3rem 0.55rem;
-  font-size: 0.78rem;
-  border-radius: 8px;
-}
-
-.env-time-label {
-  margin-top: 0.4rem;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.8rem;
-  color: #9fd8ff;
-}
-
-.env-stats {
-  margin: 0.45rem 0 0;
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.74rem;
-  line-height: 1.45;
-  color: #b8cce8;
-  max-width: 92ch;
-}
-
-.env-canvases {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-}
-
-.env-canvas-block {
-  display: flex;
-  flex-direction: column;
-  gap: 0.28rem;
-}
-
-.env-canvas-title {
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--muted);
-}
-
-.panel-environmental canvas {
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  border-radius: 8px;
-  background: rgba(4, 10, 22, 0.9);
-  border: 1px solid rgba(114, 246, 255, 0.15);
-}
-
-.env-fiber-note {
-  margin: 0.55rem 0 0;
-  font-size: 0.78rem;
-  color: var(--muted);
-  line-height: 1.4;
-}
-
-.env-caption {
-  margin-top: 0.35rem;
-}
-
 .sr-only {
   position: absolute;
   width: 1px;
@@ -1567,7 +1556,6 @@ button:disabled {
       "map"
       "selch"
       "das"
-      "sidebar"
       "hydro";
   }
 

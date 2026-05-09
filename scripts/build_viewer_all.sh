@@ -235,9 +235,11 @@ run_cmd "python3 src/extract_events_baseline.py --shot-dir output/shots/whales_h
 run_cmd "python3 src/extract_events_baseline.py --shot-dir output/shots/whales_orca"
 
 echo
-echo "== 4) Preprocess DAS and build activity maps =="
+echo "== 4) Preprocess DAS, export raw waterfall previews, and build activity maps =="
 run_cmd "python3 src/preprocess_das.py --shot whales_humpback --shot-path \"$HUMPBACK_H5\""
 run_cmd "python3 src/preprocess_das.py --shot whales_orca --shot-path \"$ORCA_H5\""
+run_cmd "python3 src/export_das_waterfall_preview.py --shot whales_humpback --shot-path \"$HUMPBACK_H5\""
+run_cmd "python3 src/export_das_waterfall_preview.py --shot whales_orca --shot-path \"$ORCA_H5\""
 run_cmd "python3 src/build_das_activity_map.py --shot whales_humpback"
 run_cmd "python3 src/build_das_activity_map.py --shot whales_orca"
 
@@ -257,7 +259,7 @@ run_cmd "python3 src/build_viewer_bundle.py"
 if [[ "$INCLUDE_ENV" -eq 1 ]]; then
   echo
   echo "== 8) Export environmental MVP artifacts =="
-  run_cmd "python3 src/export_environmental_mvp.py --nc \"$ENV_NC\" $ENV_ALSO_NC"
+  run_cmd "python3 src/export_environmental_mvp.py --nc \"$ENV_NC\" $ENV_ALSO_NC --start-date 2022-01-25 --end-date 2022-01-28"
 fi
 
 echo

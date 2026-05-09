@@ -16,7 +16,7 @@ The list reflects the current understanding that informed the **reframing** of s
 - **Orca-associated** recordings show **sparse** but **real** DAS evidence when viewed on the **right channels**, often with **band-focused** or spectrogram detail that does not read clearly from a full-cable aggregate alone. A small **viewer demo** can play band-limited **received DAS** audio next to the dataset **source reference** segment for illustration of distortion and sparsity—not a validated reconstruction of “what the whale sounded like” in situ.
 - **Humpback-associated** recordings appear **weaker and noisier** on DAS under current preprocessing; interpretation remains **support-level** and should not be equated with Orca-class clarity.
 
-These points motivate **selected-channel inspection** as the primary explanatory path for whale-related claims, and the **activity heatmap** as a **secondary context layer** rather than a definitive cable-wide detector.
+These points motivate **selected-channel inspection** as the primary explanatory path for whale-related claims, and the cable-wide DAS views as **secondary context layers** rather than definitive detectors.
 
 ## Localization
 
@@ -26,6 +26,7 @@ These points motivate **selected-channel inspection** as the primary explanatory
 ## Interpretive layers: heatmap vs selected channel
 
 - The **normalized activity map** along time and channel remains useful to see **coarse** structure and to relate preprocessing choices to wide-area patterns.
+- The **raw / preprocessed DAS waterfall** is complementary: it shows amplitude over time and raw channel index, which makes broad cable structure, coupling changes, and wave-like non-whale patterns easier to see than the aggregated activity map alone.
 - It should **not** be oversold: it is **not** a precise event detector along the full cable and **not** a substitute for reading **selected-channel** traces (waveform, spectrogram, optional band-pass **support** score).
 
 ## Environmental and non-whale structure

@@ -43,6 +43,10 @@ REQUIRED_FILES = {
         "das_activity_map.npz",
         "das_activity_map_metadata.json",
     ],
+    "waterfall": [
+        "das_waterfall_preview.npz",
+        "das_waterfall_preview_metadata.json",
+    ],
     "hydrophone_score": [
         "hydrophone_event_score.npz",
         "hydrophone_event_score_metadata.json",
@@ -69,6 +73,9 @@ def _extract_summary_fields(shot_dir: Path) -> dict[str, Any]:
         "das_preview_time_range_s": None,
         "candidate_events_fully_inside_das_preview": None,
         "das_activity_shape": None,
+        "das_waterfall_shape": None,
+        "das_waterfall_dtype": None,
+        "das_waterfall_channel_range": None,
         "das_activity_time_range_s": None,
         "hydro_score_len": None,
         "hydro_score_time_range_s": None,
@@ -121,6 +128,21 @@ def _extract_summary_fields(shot_dir: Path) -> dict[str, Any]:
         except Exception:
             pass
 
+    waterfall_p = shot_dir / "das_waterfall_preview.npz"
+    if waterfall_p.is_file():
+        try:
+            z = np.load(waterfall_p)
+            if "data" in z:
+                a = np.asarray(z["data"])
+                summary["das_waterfall_shape"] = [int(a.shape[0]), int(a.shape[1])]
+                summary["das_waterfall_dtype"] = str(a.dtype)
+            if "channel_indices" in z:
+                ch = np.asarray(z["channel_indices"])
+                if ch.size:
+                    summary["das_waterfall_channel_range"] = [int(ch[0]), int(ch[-1])]
+        except Exception:
+            pass
+
     score_p = shot_dir / "hydrophone_event_score.npz"
     if score_p.is_file():
         try:
@@ -163,7 +185,7 @@ def check_shot(shot: str) -> dict[str, Any]:
     group_status: dict[str, str] = {}
     missing_files: list[str] = []
 
-    for group in ("preprocessing", "activity_map", "hydrophone_score", "events", "base_exports"):
+    for group in ("preprocessing", "activity_map", "waterfall", "hydrophone_score", "events", "base_exports"):
         ok, miss = _all_required_for_group_exist(shot_dir, group)
         group_status[group] = _status(ok)
         missing_files.extend(miss)
@@ -188,11 +210,12 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
         "preprocessing",
         "activity_map",
         "hydro_score",
+        "waterfall",
         "events",
         "base_exports",
         "overall",
     ]
-    fmt = "{:<18} {:<13} {:<12} {:<12} {:<8} {:<12} {:<12}"
+    fmt = "{:<18} {:<13} {:<12} {:<12} {:<12} {:<8} {:<12} {:<12}"
     print(fmt.format(*headers))
     print("-" * 92)
     for r in rows:
@@ -203,6 +226,7 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
                 st["preprocessing"],
                 st["activity_map"],
                 st["hydrophone_score"],
+                st["waterfall"],
                 st["events"],
                 st["base_exports"],
                 st["overall"],
@@ -218,6 +242,9 @@ def _print_details(rows: list[dict[str, Any]]) -> None:
         print(f"  das_preview_time_range_s: {sm.get('das_preview_time_range_s')}")
         print(f"  candidate_events_fully_inside_das_preview: {sm.get('candidate_events_fully_inside_das_preview')}")
         print(f"  das_activity_shape: {sm.get('das_activity_shape')}")
+        print(f"  das_waterfall_shape: {sm.get('das_waterfall_shape')}")
+        print(f"  das_waterfall_dtype: {sm.get('das_waterfall_dtype')}")
+        print(f"  das_waterfall_channel_range: {sm.get('das_waterfall_channel_range')}")
         print(f"  hydro_score_len: {sm.get('hydro_score_len')}")
         print(f"  das_activity_time_range_s: {sm.get('das_activity_time_range_s')}")
         print(f"  hydro_score_time_range_s: {sm.get('hydro_score_time_range_s')}")

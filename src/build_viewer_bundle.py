@@ -194,6 +194,9 @@ def build_manifest(shot: str) -> dict[str, Any]:
     events_p = shot_dir / "events.json"
     das_npz_p = shot_dir / "das_activity_map.npz"
     das_meta_p = shot_dir / "das_activity_map_metadata.json"
+    das_preview_p = shot_dir / "das_preprocessed_preview.npz"
+    das_waterfall_p = shot_dir / "das_waterfall_preview.npz"
+    das_waterfall_meta_p = shot_dir / "das_waterfall_preview_metadata.json"
     hydro_npz_p = shot_dir / "hydrophone_event_score.npz"
     hydro_meta_p = shot_dir / "hydrophone_event_score_metadata.json"
 
@@ -256,6 +259,12 @@ def build_manifest(shot: str) -> dict[str, Any]:
             "events_file": _rel(events_p),
             "das_activity_map_file": _rel(das_npz_p),
             "das_activity_metadata_file": _rel(das_meta_p),
+            "das_waterfall_preview": _shot_rel(
+                shot_dir,
+                das_waterfall_p if das_waterfall_p.is_file() else das_preview_p,
+            ),
+            "das_waterfall_metadata": _shot_rel(shot_dir, das_waterfall_meta_p),
+            "das_preprocessed_preview_file": _rel(das_preview_p),
             "hydrophone_score_file": _rel(hydro_npz_p),
             "hydrophone_score_metadata_file": _rel(hydro_meta_p),
             "situation_file": _rel(sit_p),
@@ -267,7 +276,8 @@ def build_manifest(shot: str) -> dict[str, Any]:
         "missing_files": missing,
         "notes": [
             "Hydrophone event score is a support timing layer, not whale probability.",
-            "DAS activity map is the main visual layer for where/how interpretation.",
+            "DAS activity map is a processed aggregated activity context layer.",
+            "DAS waterfall view uses das_waterfall_preview.npz when available (teacher-style raw/native full-channel context), otherwise das_preprocessed_preview.npz; it is not a whale detector.",
             "Manifest references large artifacts by path and avoids duplicating large arrays.",
         ],
     }
@@ -281,6 +291,8 @@ def build_manifest(shot: str) -> dict[str, Any]:
         "selected_channel_bandpass_score",
         "selected_channels_index",
         "orca_audio_compare",
+        "das_waterfall_metadata",
+        "das_preprocessed_preview_file",
     )
     if viewer_manifest_path.is_file():
         try:

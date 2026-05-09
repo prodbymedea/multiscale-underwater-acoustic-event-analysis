@@ -2,7 +2,7 @@
 """
 Compact MVP exporter for Delft3D-FLOW environmental NetCDF (Lake Zurich thesis).
 
-Reads UMNLDF, VMNLDF, R1 temperature slice, THERMOCLINE (+ XZ, YZ, time; optional ALFAS for east/north).
+Reads UMNLDF, VMNLDF, R1 temperature, THERMOCLINE (+ XZ, YZ, ZK_LYR, time; optional ALFAS for east/north).
 Writes model-frame map fields and honest metadata; fiber sampling is deferred until
 CRS alignment is verified (no fake overlay).
 
@@ -17,7 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cftime
@@ -36,12 +36,15 @@ except ImportError as e:
 SCHEMA_VERSION = "1.2"
 DEFAULT_NC = REPO_ROOT / "data" / "raw" / "environment" / "Models.delft3dflow_zurich_20220123.nc"
 OUT_DIR = REPO_ROOT / "output" / "environmental"
+DEFAULT_START_UTC = "2022-01-25"
+DEFAULT_END_UTC = "2022-01-28"
 THERMOCLINE_FILL = -999.0
 # Delft3D dry / inactive horizontal velocity sentinel in this export (no CF _FillValue on U1).
 DELFT_DRY_VEL_ABS_MIN = 998.0
 # Default thesis instant when choosing among coverage-qualified timesteps.
 WHALE_WINDOW_PREFER_UNIX_UTC = datetime(2022, 1, 26, 12, 0, tzinfo=timezone.utc).timestamp()
 R1_DRY_SENTINEL = THERMOCLINE_FILL  # dry/land temperature cells use same -999 convention here
+DEFAULT_EXPORT_ALL_DEPTHS = True
 
 
 def _read_var(ds: Dataset, name: str) -> np.ndarray:
@@ -63,6 +66,28 @@ def _read_scalar_attr(ds: Dataset, varname: str, attr: str, default: str | None 
             return val.decode("utf-8", errors="replace")
         return str(val)
     return default
+
+
+def parse_utc_bound(value: str, *, end_of_day: bool = False) -> datetime:
+    """Parse YYYY-MM-DD or ISO datetime as UTC; date-only end bounds are exclusive next-day."""
+    s = str(value).strip()
+    if not s:
+        raise ValueError("empty date bound")
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    if len(s) == 10:
+        dt = datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
+        return dt + timedelta(days=1) if end_of_day else dt
+    dt = datetime.fromisoformat(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def utc_iso(ts: float | None) -> str | None:
+    if ts is None or not np.isfinite(ts):
+        return None
+    return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def mask_delft_dry_velocity(a: np.ndarray) -> np.ndarray:
@@ -204,6 +229,15 @@ def decimate_time_space(
     return u, v, temp, th, xz, yz
 
 
+def decimate_time_depth_space(
+    arr: np.ndarray,
+    time_stride: int,
+    space_stride: int,
+) -> np.ndarray:
+    """Decimate a (T,Z,M,N) array for browser map use."""
+    return arr[::time_stride, :, ::space_stride, ::space_stride].astype(np.float32)
+
+
 def build_meta(
     nc_path: Path,
     extra_sources: list[Path],
@@ -301,13 +335,39 @@ def main() -> None:
     )
     ap.add_argument("--time-stride", type=int, default=1, help="Keep every k-th timestep in map export.")
     ap.add_argument("--space-stride", type=int, default=1, help="Spatial decimation factor for map export.")
+    ap.add_argument(
+        "--single-depth-only",
+        action="store_true",
+        help="Write only the legacy single-layer fields, without 3D depth stacks.",
+    )
     ap.add_argument("--out-dir", type=Path, default=OUT_DIR, help="Output directory.")
+    ap.add_argument(
+        "--start-date",
+        default=DEFAULT_START_UTC,
+        help="Inclusive UTC export start date/time (default: 2022-01-25).",
+    )
+    ap.add_argument(
+        "--end-date",
+        default=DEFAULT_END_UTC,
+        help=(
+            "Exclusive UTC export end date/time. Default 2022-01-28 covers "
+            "2022-01-25 through 2022-01-27 for the whale shots."
+        ),
+    )
     args = ap.parse_args()
 
     nc_path = args.nc
     if not nc_path.is_file():
         print(f"Missing NetCDF: {nc_path}", file=sys.stderr)
         raise SystemExit(2)
+
+    start_dt = parse_utc_bound(args.start_date)
+    end_dt = parse_utc_bound(args.end_date)
+    if end_dt <= start_dt:
+        print("--end-date must be later than --start-date", file=sys.stderr)
+        raise SystemExit(2)
+    start_ts = start_dt.timestamp()
+    end_ts = end_dt.timestamp()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -321,6 +381,10 @@ def main() -> None:
     u1_layer_used: int | None = None
     r1_k: int | None = None
     r1_units_attr: str | None = None
+    depth_m: np.ndarray | None = None
+    temp_zt: np.ndarray | None = None
+    u_zt: np.ndarray | None = None
+    v_zt: np.ndarray | None = None
 
     with Dataset(nc_path, "r") as ds:
         u_raw = _read_var(ds, "UMNLDF")
@@ -335,6 +399,9 @@ def main() -> None:
             v1_full = mask_delft_dry_velocity(v1_raw_full)
             u_raw = u1_full[:, u1_layer_used, :, :]
             v_raw = v1_full[:, u1_layer_used, :, :]
+            if not args.single_depth_only:
+                u_zt = u1_full
+                v_zt = v1_full
             processing_notes.append(
                 f"UMNLDF/VMNLDF are all zero in this file; using U1/V1 at vertical index k={u1_layer_used} "
                 f"(auto-picked wet layer; values with |U| or |V| ≥ {DELFT_DRY_VEL_ABS_MIN:g} masked as dry)."
@@ -351,7 +418,7 @@ def main() -> None:
 
         time_var = ds.variables["time"]
         time_s, time_units = time_to_seconds_since_epoch(time_var)
-        nt, mc, n_u = u_raw.shape
+        nt_source, mc, n_u = u_raw.shape
         _, m_v, nc_v = v_raw.shape
         if (
             xz.shape != (m_v, nc_v)
@@ -362,6 +429,24 @@ def main() -> None:
             print("Unexpected dimension layout in NetCDF.", file=sys.stderr)
             raise SystemExit(3)
         m, n = m_v, nc_v
+
+        time_mask = (time_s >= start_ts) & (time_s < end_ts)
+        selected_indices = np.where(time_mask)[0]
+        if selected_indices.size == 0:
+            print(
+                f"No model timesteps in requested window {start_dt.isoformat()} to {end_dt.isoformat()}",
+                file=sys.stderr,
+            )
+            raise SystemExit(6)
+        processing_notes.append(
+            f"Time window clipped to {start_dt.isoformat()} inclusive through {end_dt.isoformat()} exclusive; "
+            f"kept source indices {int(selected_indices[0])}..{int(selected_indices[-1])} "
+            f"({int(selected_indices.size)} of {int(nt_source)} timesteps)."
+        )
+        u_raw = u_raw[time_mask]
+        v_raw = v_raw[time_mask]
+        th_raw = th_raw[time_mask]
+        time_s = time_s[time_mask]
 
         u_cell = stagger_u_to_cell(u_raw)
         v_cell = stagger_v_to_cell(v_raw)
@@ -389,7 +474,44 @@ def main() -> None:
         if r1_var.shape[1] < 1 or r1_var.shape[2] <= r1_k:
             print("R1 dimensions incompatible with chosen layer index.", file=sys.stderr)
             raise SystemExit(5)
-        temp_raw = np.array(r1_var[:, 0, r1_k, :, :], dtype=np.float64)
+        if not args.single_depth_only:
+            if "ZK_LYR" in ds.variables:
+                depth_m = np.abs(np.array(ds.variables["ZK_LYR"][:], dtype=np.float32))
+            elif "KMAXOUT_RESTR" in ds.variables:
+                depth_m = np.array(ds.variables["KMAXOUT_RESTR"][:], dtype=np.float32)
+            else:
+                depth_m = np.arange(r1_var.shape[2], dtype=np.float32)
+            temp_zt_raw = np.array(r1_var[:, 0, :, :, :], dtype=np.float64)[time_mask]
+            temp_zt_raw = np.where(temp_zt_raw == R1_DRY_SENTINEL, np.nan, temp_zt_raw)
+            if getattr(r1_var, "_FillValue", None) is not None:
+                temp_zt_raw = np.where(temp_zt_raw == float(r1_var._FillValue), np.nan, temp_zt_raw)
+            temp_zt = temp_zt_raw.astype(np.float32)
+            depth_order = np.argsort(depth_m)
+            depth_m = depth_m[depth_order]
+            temp_zt = temp_zt[:, depth_order, :, :]
+            processing_notes.append(
+                "Depth-enabled export: wrote R1 temperature for all available vertical layer centres "
+                "(temperature_zt with depth_m from ZK_LYR, sorted shallow to deep)."
+            )
+            if u_zt is not None and v_zt is not None:
+                u_zt = u_zt[time_mask].astype(np.float32)
+                v_zt = v_zt[time_mask].astype(np.float32)
+                u_zt = u_zt[:, depth_order, :, :]
+                v_zt = v_zt[:, depth_order, :, :]
+                if "ALFAS" in ds.variables:
+                    alfas_4d = np.array(ds.variables["ALFAS"][:], dtype=np.float32)[np.newaxis, np.newaxis, :, :]
+                    rad_4d = np.deg2rad(alfas_4d)
+                    c_4d = np.cos(rad_4d)
+                    s_4d = np.sin(rad_4d)
+                    u_e_zt = u_zt * c_4d - v_zt * s_4d
+                    v_n_zt = u_zt * s_4d + v_zt * c_4d
+                    u_zt = u_e_zt.astype(np.float32)
+                    v_zt = v_n_zt.astype(np.float32)
+                processing_notes.append(
+                    "Depth-enabled export: wrote U1/V1 currents for all available vertical layers "
+                    "(u_face_zt/v_face_zt)."
+                )
+        temp_raw = np.array(r1_var[:, 0, r1_k, :, :], dtype=np.float64)[time_mask]
         temp_raw = np.where(temp_raw == R1_DRY_SENTINEL, np.nan, temp_raw)
         if getattr(r1_var, "_FillValue", None) is not None:
             temp_raw = np.where(temp_raw == float(r1_var._FillValue), np.nan, temp_raw)
@@ -408,6 +530,9 @@ def main() -> None:
     u_d, v_d, temp_d, th_d, xz_d, yz_d = decimate_time_space(
         u_e, v_n, temp, th, xz, yz, ts, ss
     )
+    temp_zt_d = decimate_time_depth_space(temp_zt, ts, ss) if temp_zt is not None else None
+    u_zt_d = decimate_time_depth_space(u_zt, ts, ss) if u_zt is not None else None
+    v_zt_d = decimate_time_depth_space(v_zt, ts, ss) if v_zt is not None else None
     nt_exp = u_d.shape[0]
     m_exp, n_exp = xz_d.shape
 
@@ -422,7 +547,7 @@ def main() -> None:
     meta = build_meta(
         nc_path.resolve(),
         [p.resolve() for p in args.also_nc],
-        nt=nt,
+        nt=nt_source,
         m=m_exp,
         n=n_exp,
         time_units=time_units,
@@ -448,6 +573,33 @@ def main() -> None:
             "space_stride": ss,
         }
     )
+    if depth_m is not None and temp_zt_d is not None:
+        meta["dimensions"]["N_depth_exported"] = int(temp_zt_d.shape[1])
+        meta["dimensions"]["depth_axis"] = "depth_m, derived as abs(ZK_LYR); use nearest layer for requested depth."
+        meta["variables"]["temperature_3d"] = {
+            "netcdf": "R1",
+            "lstsci_index": 0,
+            "export": "temperature_zt",
+            "shape": ["time", "depth", "M", "N"],
+            "depth_axis": "depth_m",
+            "units_file": r1_units_attr,
+            "units_interpretation": "Nominal NetCDF units; displayed as °C (typical lake T magnitude).",
+        }
+        if u_zt_d is not None and v_zt_d is not None:
+            meta["variables"]["flow_u_3d"] = {
+                "netcdf": "U1",
+                "export": "u_face_zt",
+                "shape": ["time", "depth", "M", "N"],
+                "depth_axis": "depth_m",
+                "units_export": "m s-1",
+            }
+            meta["variables"]["flow_v_3d"] = {
+                "netcdf": "V1",
+                "export": "v_face_zt",
+                "shape": ["time", "depth", "M", "N"],
+                "depth_axis": "depth_m",
+                "units_export": "m s-1",
+            }
     meta["variables"]["flow_u"]["description"] = flow_catalog_note
     meta["variables"]["flow_v"]["description"] = flow_catalog_note
     if u1_layer_used is not None:
@@ -471,6 +623,16 @@ def main() -> None:
             "R1 temperature at the wet vertical layer has much higher horizontal coverage than THERMOCLINE "
             "in the audited 20220123 file; thermocline remains exported as a secondary diagnostic."
         ),
+    }
+    meta["requested_time_window_utc"] = {
+        "start_inclusive": start_dt.isoformat().replace("+00:00", "Z"),
+        "end_exclusive": end_dt.isoformat().replace("+00:00", "Z"),
+        "purpose": "Thesis dashboard focus window covering 2022-01-25 through 2022-01-27.",
+    }
+    meta["exported_time_window_utc"] = {
+        "start": utc_iso(float(time_s.min())) if time_s.size else None,
+        "end": utc_iso(float(time_s.max())) if time_s.size else None,
+        "n_steps_before_stride": int(time_s.size),
     }
 
     th_time_s = time_s[::ts].astype(np.float64)
@@ -502,16 +664,22 @@ def main() -> None:
         json.dump(meta, f, indent=2)
 
     map_npz = args.out_dir / "environmental_map_fields.npz"
-    np.savez_compressed(
-        map_npz,
-        XZ=xz_d,
-        YZ=yz_d,
-        time_s=time_s[::ts].astype(np.float64),
-        u_face_t=u_d,
-        v_face_t=v_d,
-        temperature_t=temp_d,
-        thermocline_t=th_d,
-    )
+    map_payload = {
+        "XZ": xz_d,
+        "YZ": yz_d,
+        "time_s": time_s[::ts].astype(np.float64),
+        "u_face_t": u_d,
+        "v_face_t": v_d,
+        "temperature_t": temp_d,
+        "thermocline_t": th_d,
+    }
+    if depth_m is not None and temp_zt_d is not None:
+        map_payload["depth_m"] = depth_m.astype(np.float32)
+        map_payload["temperature_zt"] = temp_zt_d
+        if u_zt_d is not None and v_zt_d is not None:
+            map_payload["u_face_zt"] = u_zt_d
+            map_payload["v_face_zt"] = v_zt_d
+    np.savez_compressed(map_npz, **map_payload)
 
     # Fiber bundle: honest empty second dimension
     fiber_npz = args.out_dir / "environmental_fiber_timeseries.npz"

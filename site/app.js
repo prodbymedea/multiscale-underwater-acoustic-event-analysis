@@ -33,17 +33,11 @@ const ASSET_BASE_CANDIDATES = {
   /* Full pipeline outputs (gitignored). */
   output: ["../output", "./output", "output", "./data"],
   /* Small JSON samples committed for fallback rendering. */
-  samples: ["../output_samples", "./output_samples", "output_samples"],
-  /* Environmental MVP exports (gitignored). */
-  env: [
-    "../output/environmental",
-    "./output/environmental",
-    "output/environmental"
-  ]
+  samples: ["../output_samples", "./output_samples", "output_samples"]
 };
 
 const assetResolver = {
-  lockedBases: { output: null, samples: null, env: null },
+  lockedBases: { output: null, samples: null },
   attempts: [],
   failures: [],
   summary() {
@@ -164,7 +158,6 @@ async function loadAssetNpz(kind, relPath) {
 /** Back-compat shims so existing code keeps working unchanged. */
 const OUTPUT_BASE_CANDIDATES = ASSET_BASE_CANDIDATES.output;
 const SAMPLE_BASE_CANDIDATES = ASSET_BASE_CANDIDATES.samples;
-const ENV_BASE_CANDIDATES = ASSET_BASE_CANDIDATES.env;
 
 const MAP_TIMELINE_PLAY_SPEED_S = 120;
 const TRACK_PALETTE = ["#72f6ff", "#ff9f1c", "#9cff57", "#ffe66d", "#c9a0ff", "#ff7a59"];
@@ -177,6 +170,10 @@ const state = {
   selectedManifest: null,
   shotBundle: null,
   eventCount: null,
+  dasViewMode: "waterfall",
+  shotLoadSeq: 0,
+  dasWaterfallCache: {},
+  dasWaterfallLoading: {},
   playing: false,
   cursorTime: 0,
   hover: {
@@ -221,16 +218,7 @@ const state = {
   mapPanLastRenderTs: 0,
   mapTimelinePlayFrame: 0,
   mapTimelineLastTickMs: 0,
-  lastStatusMessage: null,
-  environmental: {
-    meta: null,
-    mapNpz: null,
-    fiberNpz: null,
-    layout: null,
-    timeIndex: 0,
-    sourceMetaUrl: null,
-    sourceMapUrl: null
-  }
+  lastStatusMessage: null
 };
 
 const el = {
@@ -250,6 +238,9 @@ const el = {
   metaEventCount: document.getElementById("meta-event-count"),
   metaActiveEvent: document.getElementById("meta-active-event"),
   metaGroundTruth: document.getElementById("meta-ground-truth"),
+  dasHeading: document.getElementById("das-heading"),
+  dasModeActivity: document.getElementById("das-mode-activity"),
+  dasModeWaterfall: document.getElementById("das-mode-waterfall"),
   dasCanvas: document.getElementById("das-canvas"),
   dasCaption: document.getElementById("das-caption"),
   hydroSvg: document.getElementById("hydro-svg"),
@@ -299,20 +290,7 @@ const el = {
   selchAudioHint: document.getElementById("selch-audio-hint"),
   selchPlayDasAudio: document.getElementById("selch-play-das-audio"),
   selchPlaySourceAudio: document.getElementById("selch-play-source-audio"),
-  selchStopAudio: document.getElementById("selch-stop-audio"),
-  envUnavailable: document.getElementById("env-unavailable"),
-  envContent: document.getElementById("env-content"),
-  envCaveat: document.getElementById("env-caveat"),
-  envTimeSlider: document.getElementById("env-time-slider"),
-  envTimeLabel: document.getElementById("env-time-label"),
-  envPrev: document.getElementById("env-prev"),
-  envNext: document.getElementById("env-next"),
-  envThermoCanvas: document.getElementById("env-thermo-canvas"),
-  envFlowCanvas: document.getElementById("env-flow-canvas"),
-  envFiberNote: document.getElementById("env-fiber-note"),
-  envCaption: document.getElementById("env-caption"),
-  envStats: document.getElementById("env-stats"),
-  envScalarTitle: document.getElementById("env-scalar-title")
+  selchStopAudio: document.getElementById("selch-stop-audio")
 };
 
 /** Selected-channel demo audio (Orca): stop before shot/channel change. */
@@ -435,7 +413,9 @@ function updateDataStatus(message) {
     return;
   }
   state.lastStatusMessage = message;
-  el.dataStatus.textContent = message;
+  if (el.dataStatus) {
+    el.dataStatus.textContent = message;
+  }
 }
 
 function formatSeconds(value) {
@@ -901,6 +881,65 @@ function buildDasActivityFromNpz(npz) {
   };
 }
 
+function buildDasWaterfallFromNpz(npz) {
+  if (!npz) {
+    return null;
+  }
+  const wf = npz.data || npz.preprocessed_preview || npz.raw_preview;
+  const t = npz.t_s;
+  const ch = npz.channel_indices || npz.preview_cols;
+  if (!wf?.data || !t?.data || !ch?.data || wf.shape?.length !== 2) {
+    return null;
+  }
+
+  const shape = wf.shape;
+  const nt = t.data.length;
+  const nc = ch.data.length;
+  let orientation = null;
+  if (shape[0] === nt && shape[1] === nc) {
+    orientation = "time_channel";
+  } else if (shape[0] === nc && shape[1] === nt) {
+    orientation = "channel_time";
+  } else {
+    return null;
+  }
+
+  const distances = npz.distances_m?.data && npz.distances_m.data.length === nc
+    ? Array.from(npz.distances_m.data)
+    : null;
+  let fsHz = Number(npz.fs_hz?.data?.[0] ?? npz.sample_rate_hz?.data?.[0]);
+  if (!Number.isFinite(fsHz) && nt > 1) {
+    const dt = Number(t.data[1]) - Number(t.data[0]);
+    fsHz = dt > 0 ? 1 / dt : null;
+  }
+
+  const payload = {
+    axes: {
+      t_s: Array.from(t.data),
+      channel_indices: Array.from(ch.data),
+      sample_indices: npz.sample_indices?.data ? Array.from(npz.sample_indices.data) : null,
+      distances_m: distances
+    },
+    data: wf.data,
+    shape,
+    fortran: !!wf.fortran,
+    orientation,
+    fsHz,
+    sourceKey: npz.data ? "data" : (npz.preprocessed_preview ? "preprocessed_preview" : "raw_preview"),
+    amplitudeUnits: npz.data ? "native DAS counts" : (npz.preprocessed_preview ? "robust-normalized amplitude" : "DAS amplitude"),
+    colorScale: null
+  };
+
+  console.info(
+    `[das-waterfall] loaded shape=${shape.join("x")} orientation=${orientation} source=${payload.sourceKey}`
+  );
+  console.info(
+    `[das-waterfall] t_s ${payload.axes.t_s[0]}..${payload.axes.t_s[payload.axes.t_s.length - 1]}, ` +
+    `channels ${payload.axes.channel_indices[0]}..${payload.axes.channel_indices[payload.axes.channel_indices.length - 1]}, fs≈${fsHz?.toFixed?.(2) || "unknown"} Hz`
+  );
+  return payload;
+}
+
 function buildHydroActivityFromNpz(npz, scoreMetadata) {
   if (!npz) {
     return null;
@@ -920,632 +959,6 @@ function buildHydroActivityFromNpz(npz, scoreMetadata) {
     hydro.normalization.threshold_db = thresholdDb;
   }
   return hydro;
-}
-
-function npIndex2(shape, row, col, fortran) {
-  const M = shape[0];
-  const N = shape[1];
-  if (!fortran) {
-    return row * N + col;
-  }
-  return row + M * col;
-}
-
-function npIndex3(shape, t, row, col, fortran) {
-  const Nt = shape[0];
-  const M = shape[1];
-  const N = shape[2];
-  if (!fortran) {
-    return t * M * N + row * N + col;
-  }
-  return t + Nt * (row + M * col);
-}
-
-async function tryLoadEnvironmentalJson(fileName) {
-  const res = await loadAssetJson("env", fileName);
-  return { data: res.data, url: res.url, tried: res.tried };
-}
-
-async function tryLoadEnvironmentalNpz(fileName) {
-  const res = await loadAssetNpz("env", fileName);
-  return { npz: res.npz, url: res.url, tried: res.tried };
-}
-
-function validateEnvironmentalMapNpz(npz) {
-  if (!npz) {
-    return null;
-  }
-  const required = ["XZ", "YZ", "time_s", "u_face_t", "v_face_t"];
-  for (const k of required) {
-    if (!npz[k]?.data || !npz[k]?.shape) {
-      return null;
-    }
-  }
-  const xz = npz.XZ;
-  if (xz.shape.length !== 2) {
-    return null;
-  }
-  const M = xz.shape[0];
-  const N = xz.shape[1];
-  if (npz.YZ.shape[0] !== M || npz.YZ.shape[1] !== N) {
-    return null;
-  }
-  let primaryScalarKey = null;
-  if (npz.temperature_t?.data && npz.temperature_t.shape?.length === 3) {
-    primaryScalarKey = "temperature_t";
-  } else if (npz.thermocline_t?.data && npz.thermocline_t.shape?.length === 3) {
-    primaryScalarKey = "thermocline_t";
-  } else {
-    return null;
-  }
-  const scalar = npz[primaryScalarKey];
-  const Nt = scalar.shape[0];
-  if (scalar.shape[1] !== M || scalar.shape[2] !== N) {
-    return null;
-  }
-  const u = npz.u_face_t;
-  const v = npz.v_face_t;
-  if (u.shape[0] !== Nt || u.shape[1] !== M || u.shape[2] !== N) {
-    return null;
-  }
-  if (v.shape[0] !== Nt || v.shape[1] !== M || v.shape[2] !== N) {
-    return null;
-  }
-  if (npz.time_s.data.length !== Nt) {
-    return null;
-  }
-  return {
-    M,
-    N,
-    Nt,
-    primaryScalarKey,
-    hasThermoclineSecondary: !!(npz.thermocline_t?.data && npz.thermocline_t.shape?.length === 3)
-  };
-}
-
-function environmentalFiberSeriesPending(npz) {
-  if (!npz?.u_ms?.shape || npz.u_ms.shape.length < 2) {
-    return true;
-  }
-  return npz.u_ms.shape[1] === 0;
-}
-
-function colorForEnvScalar01(t01) {
-  const v = clamp(t01, 0, 1);
-  const stops = [
-    [12, 18, 40],
-    [30, 70, 130],
-    [70, 160, 230],
-    [200, 230, 255],
-    [255, 220, 140]
-  ];
-  const scaled = v * (stops.length - 1);
-  const idx = Math.min(stops.length - 2, Math.floor(scaled));
-  const frac = scaled - idx;
-  const p = stops[idx];
-  const q = stops[idx + 1];
-  const r = Math.round(p[0] + (q[0] - p[0]) * frac);
-  const g = Math.round(p[1] + (q[1] - p[1]) * frac);
-  const b = Math.round(p[2] + (q[2] - p[2]) * frac);
-  return [r, g, b];
-}
-
-function colorForFlowSpeed01(t01) {
-  const v = clamp(t01, 0, 1);
-  const stops = [
-    [8, 12, 28],
-    [20, 40, 90],
-    [50, 120, 200],
-    [180, 230, 255]
-  ];
-  const scaled = v * (stops.length - 1);
-  const idx = Math.min(stops.length - 2, Math.floor(scaled));
-  const frac = scaled - idx;
-  const p = stops[idx];
-  const q = stops[idx + 1];
-  const r = Math.round(p[0] + (q[0] - p[0]) * frac);
-  const g = Math.round(p[1] + (q[1] - p[1]) * frac);
-  const b = Math.round(p[2] + (q[2] - p[2]) * frac);
-  return [r, g, b];
-}
-
-function fitEnvironmentalCanvas(canvas) {
-  const rect = canvas.getBoundingClientRect();
-  const wCss = Math.max(280, Math.floor(rect.width) || 920);
-  const hCss = Math.max(200, Math.floor(wCss * (300 / 920)));
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  canvas.width = Math.floor(wCss * dpr);
-  canvas.height = Math.floor(hCss * dpr);
-  canvas.style.height = `${hCss}px`;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  return { ctx, w: wCss, h: hCss };
-}
-
-function computeScalarRangeForTime(npz, tIdx, layout, fieldKey) {
-  const sc = npz[fieldKey];
-  if (!sc?.data) {
-    return { lo: 0, hi: 1, sparse: true, count: 0 };
-  }
-  const { M, N } = layout;
-  const fort = !!sc.fortran;
-  const isTemp = fieldKey === "temperature_t";
-  const floorSpan = isTemp ? 0.08 : 0.5;
-  const vals = [];
-  for (let m = 0; m < M; m += 1) {
-    for (let n = 0; n < N; n += 1) {
-      const ix = npIndex3(sc.shape, tIdx, m, n, fort);
-      const v = sc.data[ix];
-      if (Number.isFinite(v)) {
-        vals.push(v);
-      }
-    }
-  }
-  vals.sort((a, b) => a - b);
-  if (vals.length === 0) {
-    return { lo: 0, hi: 1, sparse: true, count: 0 };
-  }
-  if (vals.length < 12) {
-    const lo0 = vals[0];
-    const hi0 = vals[vals.length - 1];
-    const span = Math.max(1e-4, hi0 - lo0, Math.abs(lo0) * 1e-6, floorSpan);
-    return {
-      lo: lo0 - 0.08 * span,
-      hi: hi0 + 0.08 * span,
-      sparse: true,
-      count: vals.length
-    };
-  }
-  const lo = quantileFromSorted(vals, 0.05);
-  const hi = quantileFromSorted(vals, 0.95);
-  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
-    const lo0 = vals[0];
-    const hi0 = vals[vals.length - 1];
-    const span = Math.max(1e-4, hi0 - lo0, floorSpan);
-    return {
-      lo: lo0 - 0.05 * span,
-      hi: hi0 + 0.05 * span,
-      sparse: true,
-      count: vals.length
-    };
-  }
-  const sparseFrac = isTemp ? 0.35 : 0.02;
-  return { lo, hi, sparse: vals.length < M * N * sparseFrac, count: vals.length };
-}
-
-/** Plot area inside environmental canvases (room for captions above). */
-const ENV_GRID_LABEL_TOP = 40;
-const ENV_GRID_PAD = 16;
-
-function envGridPlotRect(canvasW, canvasH) {
-  const plotLeft = ENV_GRID_PAD;
-  const plotW = Math.max(10, canvasW - 2 * ENV_GRID_PAD);
-  const plotH = Math.max(10, canvasH - ENV_GRID_LABEL_TOP - ENV_GRID_PAD);
-  return { plotLeft, plotTop: ENV_GRID_LABEL_TOP, plotW, plotH };
-}
-
-function envGridCellCenterPx(m, n, M, N, rect) {
-  return {
-    px: rect.plotLeft + ((n + 0.5) / N) * rect.plotW,
-    py: rect.plotTop + ((m + 0.5) / M) * rect.plotH
-  };
-}
-
-function renderEnvironmentalPanels() {
-  const env = state.environmental;
-  if (!env.mapNpz || !env.layout || !el.envThermoCanvas || !el.envFlowCanvas) {
-    return;
-  }
-  const npz = env.mapNpz;
-  const { M, N, Nt } = env.layout;
-  const ti = clamp(env.timeIndex, 0, Nt - 1);
-  env.timeIndex = ti;
-
-  const fieldKey = env.layout.primaryScalarKey || "temperature_t";
-  const sc = npz[fieldKey];
-  const uu = npz.u_face_t;
-  const vv = npz.v_face_t;
-  const fort3 = !!sc.fortran;
-  const isTempScalar = fieldKey === "temperature_t";
-
-  const scalarRange = computeScalarRangeForTime(npz, ti, env.layout, fieldKey);
-  const tLo = scalarRange.lo;
-  const tHi = scalarRange.hi;
-  const spanT = Math.max(1e-4, tHi - tLo);
-
-  /* Primary scalar: M×N index-space heatmap (curvilinear XZ/YZ not used — avoids collapsed projection). */
-  const thermoFit = fitEnvironmentalCanvas(el.envThermoCanvas);
-  const tctx = thermoFit.ctx;
-  if (!tctx) {
-    return;
-  }
-  const tw = thermoFit.w;
-  const thh = thermoFit.h;
-  const sRect = envGridPlotRect(tw, thh);
-  tctx.fillStyle = "#070d18";
-  tctx.fillRect(0, 0, tw, thh);
-
-  const scImg = tctx.createImageData(N, M);
-  for (let m = 0; m < M; m += 1) {
-    for (let n = 0; n < N; n += 1) {
-      const ix = npIndex3(sc.shape, ti, m, n, fort3);
-      const v = sc.data[ix];
-      const o = (m * N + n) * 4;
-      if (!Number.isFinite(v)) {
-        scImg.data[o] = 45;
-        scImg.data[o + 1] = 48;
-        scImg.data[o + 2] = 58;
-        scImg.data[o + 3] = 255;
-      } else {
-        const rgb = colorForEnvScalar01((v - tLo) / spanT);
-        scImg.data[o] = rgb[0];
-        scImg.data[o + 1] = rgb[1];
-        scImg.data[o + 2] = rgb[2];
-        scImg.data[o + 3] = 255;
-      }
-    }
-  }
-  const scTmp = document.createElement("canvas");
-  scTmp.width = N;
-  scTmp.height = M;
-  const scTx = scTmp.getContext("2d");
-  if (scTx) {
-    scTx.putImageData(scImg, 0, 0);
-    tctx.imageSmoothingEnabled = false;
-    tctx.drawImage(scTmp, 0, 0, N, M, sRect.plotLeft, sRect.plotTop, sRect.plotW, sRect.plotH);
-  }
-
-  tctx.save();
-  tctx.strokeStyle = "rgba(180, 210, 255, 0.35)";
-  tctx.lineWidth = 1;
-  tctx.strokeRect(0.5, 0.5, tw - 1, thh - 1);
-  tctx.strokeStyle = "rgba(120, 160, 220, 0.45)";
-  tctx.strokeRect(sRect.plotLeft + 0.5, sRect.plotTop + 0.5, sRect.plotW - 1, sRect.plotH - 1);
-  tctx.fillStyle = "rgba(230, 240, 255, 0.85)";
-  tctx.font = "11px IBM Plex Mono, monospace";
-  tctx.fillText(
-    `Model grid indices: ${M} rows × ${N} cols (not LV95 map). XZ/YZ not used for layout.`,
-    8,
-    18
-  );
-  const tCount = scalarRange.count ?? 0;
-  const tFrac = (100 * tCount) / (M * N);
-  const tSparse = scalarRange.sparse ? "sparse " : "";
-  const scLabel = isTempScalar ? "Temperature R1 (°C nominal)" : "Thermocline depth (m)";
-  const scFmt = isTempScalar ? ((x) => x.toFixed(2)) : ((x) => x.toFixed(1));
-  tctx.fillText(
-    `${scLabel}; ${tSparse}scale ${scFmt(tLo)}…${scFmt(tHi)} (${tCount} finite, ${tFrac.toFixed(1)}% of cells)`,
-    8,
-    34
-  );
-  tctx.restore();
-
-  /* Flow: speed heatmap + quiver in the same index grid as the scalar. */
-  const flowFit = fitEnvironmentalCanvas(el.envFlowCanvas);
-  const fctx = flowFit.ctx;
-  if (!fctx) {
-    return;
-  }
-  const fw = flowFit.w;
-  const fh = flowFit.h;
-  const fRect = envGridPlotRect(fw, fh);
-  fctx.fillStyle = "#070d18";
-  fctx.fillRect(0, 0, fw, fh);
-
-  const speedsAll = [];
-  for (let m = 0; m < M; m += 1) {
-    for (let n = 0; n < N; n += 1) {
-      const iu = npIndex3(uu.shape, ti, m, n, !!uu.fortran);
-      const iv = npIndex3(vv.shape, ti, m, n, !!vv.fortran);
-      const u0 = uu.data[iu];
-      const v0 = vv.data[iv];
-      if (Number.isFinite(u0) && Number.isFinite(v0)) {
-        speedsAll.push(Math.hypot(u0, v0));
-      }
-    }
-  }
-  speedsAll.sort((a, b) => a - b);
-  const sLo = speedsAll.length ? quantileFromSorted(speedsAll, 0.08) : 0;
-  const sHi = speedsAll.length ? quantileFromSorted(speedsAll, 0.92) : 1;
-  const spanS = Math.max(1e-9, sHi - sLo);
-  const speedRefArrows =
-    speedsAll.length > 0
-      ? Math.max(quantileFromSorted(speedsAll, 0.88), 1e-6)
-      : 1;
-
-  const spImg = fctx.createImageData(N, M);
-  for (let m = 0; m < M; m += 1) {
-    for (let n = 0; n < N; n += 1) {
-      const iu = npIndex3(uu.shape, ti, m, n, !!uu.fortran);
-      const iv = npIndex3(vv.shape, ti, m, n, !!vv.fortran);
-      const u0 = uu.data[iu];
-      const v0 = vv.data[iv];
-      const o = (m * N + n) * 4;
-      if (!Number.isFinite(u0) || !Number.isFinite(v0)) {
-        spImg.data[o] = 30;
-        spImg.data[o + 1] = 35;
-        spImg.data[o + 2] = 50;
-        spImg.data[o + 3] = 255;
-      } else {
-        const sp = Math.hypot(u0, v0);
-        const rgb = colorForFlowSpeed01((sp - sLo) / spanS);
-        spImg.data[o] = rgb[0];
-        spImg.data[o + 1] = rgb[1];
-        spImg.data[o + 2] = rgb[2];
-        spImg.data[o + 3] = 255;
-      }
-    }
-  }
-  const spTmp = document.createElement("canvas");
-  spTmp.width = N;
-  spTmp.height = M;
-  const spTx = spTmp.getContext("2d");
-  if (spTx) {
-    spTx.putImageData(spImg, 0, 0);
-    fctx.imageSmoothingEnabled = false;
-    fctx.drawImage(spTmp, 0, 0, N, M, fRect.plotLeft, fRect.plotTop, fRect.plotW, fRect.plotH);
-  }
-
-  const strideM = Math.max(1, Math.floor(M / 28));
-  const strideN = Math.max(1, Math.floor(N / 14));
-  const samples = [];
-  for (let m = 0; m < M; m += strideM) {
-    for (let n = 0; n < N; n += strideN) {
-      const iu = npIndex3(uu.shape, ti, m, n, !!uu.fortran);
-      const iv = npIndex3(vv.shape, ti, m, n, !!vv.fortran);
-      const u0 = uu.data[iu];
-      const v0 = vv.data[iv];
-      if (!Number.isFinite(u0) || !Number.isFinite(v0)) {
-        continue;
-      }
-      const sp = Math.hypot(u0, v0);
-      const { px, py } = envGridCellCenterPx(m, n, M, N, fRect);
-      samples.push({ px, py, u0, v0, sp });
-    }
-  }
-  const arrowMax = 26;
-  fctx.strokeStyle = "rgba(255, 250, 220, 0.9)";
-  fctx.lineWidth = 1.25;
-  fctx.fillStyle = "rgba(255, 250, 220, 0.88)";
-  for (const s of samples) {
-    const len = Math.max(1.1, (s.sp / speedRefArrows) * arrowMax);
-    if (s.sp < 1e-9) {
-      continue;
-    }
-    const dx = (s.u0 / (s.sp || 1)) * len;
-    const dy = -(s.v0 / (s.sp || 1)) * len;
-    fctx.beginPath();
-    fctx.moveTo(s.px - dx * 0.5, s.py - dy * 0.5);
-    fctx.lineTo(s.px + dx * 0.5, s.py + dy * 0.5);
-    fctx.stroke();
-    const ah = 3.5;
-    const ang = Math.atan2(dy, dx);
-    const x2 = s.px + dx * 0.5;
-    const y2 = s.py + dy * 0.5;
-    fctx.beginPath();
-    fctx.moveTo(x2, y2);
-    fctx.lineTo(x2 - ah * Math.cos(ang - 0.45), y2 - ah * Math.sin(ang - 0.45));
-    fctx.lineTo(x2 - ah * Math.cos(ang + 0.45), y2 - ah * Math.sin(ang + 0.45));
-    fctx.closePath();
-    fctx.fill();
-  }
-
-  fctx.save();
-  fctx.strokeStyle = "rgba(180, 210, 255, 0.35)";
-  fctx.lineWidth = 1;
-  fctx.strokeRect(0.5, 0.5, fw - 1, fh - 1);
-  fctx.strokeStyle = "rgba(120, 160, 220, 0.45)";
-  fctx.strokeRect(fRect.plotLeft + 0.5, fRect.plotTop + 0.5, fRect.plotW - 1, fRect.plotH - 1);
-  fctx.fillStyle = "rgba(230, 240, 255, 0.85)";
-  fctx.font = "11px IBM Plex Mono, monospace";
-  fctx.fillText(
-    "Arrows: u east / v north (m/s) at cell centres in grid index space; length ∝ speed (subsampled).",
-    8,
-    18
-  );
-  fctx.fillText(
-    `Speed colour ~8–92%: ${sLo.toFixed(4)} … ${sHi.toFixed(4)} m/s; ref ${speedRefArrows.toFixed(4)} m/s — same M×N layout as scalar.`,
-    8,
-    34
-  );
-  fctx.restore();
-
-  if (el.envStats) {
-    const sq50 = speedsAll.length ? quantileFromSorted(speedsAll, 0.5) : 0;
-    const sq95 = speedsAll.length ? quantileFromSorted(speedsAll, 0.95) : 0;
-    const hint = env.meta?.viewer_hints;
-    const extra = hint?.default_time_index === ti && hint?.default_time_index_note
-      ? ` Default step from export: ${hint.default_time_index_note}`
-      : "";
-    const scShort = isTempScalar ? "temperature" : "thermocline";
-    const sec = env.layout.hasThermoclineSecondary && isTempScalar ? " thermocline_t also in bundle (sparse)." : "";
-    el.envStats.textContent =
-      `This timestep: ${scShort} ${tCount} finite cells (${tFrac.toFixed(1)}% of ${M}×${N}); ` +
-      `speed median ${sq50.toFixed(4)} m/s, 95th ${sq95.toFixed(4)} m/s.${sec}${extra}`;
-  }
-
-  if (el.envCaption) {
-    const proc = Array.isArray(env.meta?.processing) ? env.meta.processing.join(" ") : "";
-    el.envCaption.textContent = proc
-      ? `Backend notes: ${proc}`
-      : "Environmental MVP map fields loaded.";
-  }
-}
-
-function syncEnvironmentalTimeControls() {
-  const env = state.environmental;
-  if (!el.envTimeSlider || !env.layout) {
-    return;
-  }
-  const { Nt } = env.layout;
-  const maxI = Math.max(0, Nt - 1);
-  el.envTimeSlider.min = "0";
-  el.envTimeSlider.max = String(maxI);
-  el.envTimeSlider.step = "1";
-  env.timeIndex = clamp(env.timeIndex, 0, maxI);
-  el.envTimeSlider.value = String(env.timeIndex);
-  el.envTimeSlider.setAttribute("aria-valuemax", String(maxI));
-  el.envTimeSlider.setAttribute("aria-valuenow", String(env.timeIndex));
-  if (el.envTimeLabel && env.mapNpz?.time_s?.data) {
-    const ts = env.mapNpz.time_s.data[env.timeIndex];
-    if (Number.isFinite(ts)) {
-      const d = new Date(ts * 1000);
-      el.envTimeLabel.textContent = `Step ${env.timeIndex + 1} / ${Nt} — ${d.toISOString().replace("T", " ").replace(".000Z", " Z")}`;
-    } else {
-      el.envTimeLabel.textContent = `Step ${env.timeIndex + 1} / ${Nt}`;
-    }
-  }
-}
-
-function bindEnvironmentalPanelHandlers() {
-  if (!el.envTimeSlider) {
-    return;
-  }
-  const onStep = (delta) => {
-    const env = state.environmental;
-    if (!env.layout) {
-      return;
-    }
-    env.timeIndex = clamp(env.timeIndex + delta, 0, env.layout.Nt - 1);
-    syncEnvironmentalTimeControls();
-    renderEnvironmentalPanels();
-  };
-  el.envTimeSlider.addEventListener("input", () => {
-    const v = Number.parseInt(el.envTimeSlider.value, 10);
-    if (!Number.isFinite(v)) {
-      return;
-    }
-    state.environmental.timeIndex = v;
-    syncEnvironmentalTimeControls();
-    renderEnvironmentalPanels();
-  });
-  if (el.envPrev) {
-    el.envPrev.addEventListener("click", () => onStep(-1));
-  }
-  if (el.envNext) {
-    el.envNext.addEventListener("click", () => onStep(1));
-  }
-}
-
-async function loadEnvironmentalMvp() {
-  const env = state.environmental;
-  const metaRes = await tryLoadEnvironmentalJson("environmental_mvp_meta.json");
-  const mapRes = await tryLoadEnvironmentalNpz("environmental_map_fields.npz");
-  const fibRes = await tryLoadEnvironmentalNpz("environmental_fiber_timeseries.npz");
-
-  if (!metaRes.data || !mapRes.npz) {
-    env.meta = null;
-    env.mapNpz = null;
-    env.fiberNpz = fibRes.npz;
-    env.layout = null;
-    if (el.envUnavailable) {
-      el.envUnavailable.hidden = false;
-      const p = el.envUnavailable.querySelector("p");
-      if (p) {
-        const missingBits = [];
-        if (!metaRes.data) {
-          missingBits.push("environmental_mvp_meta.json");
-        }
-        if (!mapRes.npz) {
-          missingBits.push("environmental_map_fields.npz");
-        }
-        const tried = [
-          ...(metaRes.tried || []),
-          ...(mapRes.tried || [])
-        ].map((t) => t.url);
-        const triedShort = Array.from(new Set(tried)).slice(0, 6).join(", ");
-        p.textContent =
-          `Environmental MVP files not found (${missingBits.join(", ")}). ` +
-          `Run "python src/export_environmental_mvp.py" from the repo root, ` +
-          `then serve the project per site/README.md. ` +
-          `Tried: ${triedShort}.`;
-      }
-    }
-    if (el.envContent) {
-      el.envContent.hidden = true;
-    }
-    return;
-  }
-
-  const layout = validateEnvironmentalMapNpz(mapRes.npz);
-  if (!layout) {
-    env.meta = metaRes.data;
-    env.mapNpz = null;
-    env.layout = null;
-    if (el.envUnavailable) {
-      el.envUnavailable.hidden = false;
-      const p = el.envUnavailable.querySelector("p");
-      if (p) {
-        p.textContent =
-          "Environmental map bundle failed validation (unexpected array shapes). See console.";
-      }
-    }
-    if (el.envContent) {
-      el.envContent.hidden = true;
-    }
-    return;
-  }
-
-  env.meta = metaRes.data;
-  env.mapNpz = mapRes.npz;
-  env.fiberNpz = fibRes.npz;
-  env.layout = layout;
-  env.sourceMetaUrl = metaRes.url;
-  env.sourceMapUrl = mapRes.url;
-  env.timeIndex = 0;
-  const vh = metaRes.data.viewer_hints;
-  if (vh && Number.isFinite(Number(vh.default_time_index))) {
-    env.timeIndex = clamp(Math.floor(Number(vh.default_time_index)), 0, layout.Nt - 1);
-  }
-
-  if (el.envUnavailable) {
-    el.envUnavailable.hidden = true;
-  }
-  if (el.envContent) {
-    el.envContent.hidden = false;
-  }
-
-  const crs = metaRes.data.crs_and_alignment || {};
-  const alignStatus = crs.status || "unknown";
-  if (el.envCaveat) {
-    const bits = [
-      `CRS / alignment: ${alignStatus}.`,
-      crs.summary || "",
-      crs.overlay_feasibility || "",
-      vh?.temperature_note || "",
-      vh?.thermocline_note || "",
-      metaRes.data?.mvp_scalar?.rationale || "",
-      "These fields are for contextual inspection only; they do not prove causality with DAS bands or whale activity."
-    ];
-    el.envCaveat.textContent = bits.filter(Boolean).join(" ");
-  }
-
-  if (el.envScalarTitle) {
-    const pk = layout.primaryScalarKey;
-    const vk = vh?.temperature_r1_layer_k ?? metaRes.data?.variables?.temperature?.vertical_index_k;
-    if (pk === "temperature_t" && Number.isFinite(Number(vk))) {
-      el.envScalarTitle.textContent = `Temperature (R1, layer k=${vk}, °C nominal) — model grid indices`;
-    } else if (pk === "thermocline_t") {
-      el.envScalarTitle.textContent = "Thermocline depth (m; legacy export — often sparse) — model grid indices";
-    } else {
-      el.envScalarTitle.textContent = "Scalar field — model grid indices";
-    }
-  }
-
-  if (el.envFiberNote) {
-    if (environmentalFiberSeriesPending(fibRes.npz)) {
-      const ft = metaRes.data.fiber_timeseries || {};
-      el.envFiberNote.textContent =
-        `Along-fiber environmental profiles: ${ft.projection === "pending" ? "pending" : "unavailable"} — ${ft.reason || "No validated model↔LV95 transform in-repo."}`;
-    } else {
-      el.envFiberNote.textContent = "Along-fiber environmental series present (verify metadata before interpreting).";
-    }
-  }
-
-  syncEnvironmentalTimeControls();
-  renderEnvironmentalPanels();
 }
 
 async function attachMainPanelsFromNpzFallback(manifest, manifestUrl, bundle) {
@@ -1592,6 +1005,92 @@ async function attachMainPanelsFromNpzFallback(manifest, manifestUrl, bundle) {
       }
       return true;
     });
+  }
+}
+
+function renderDasStatusMessage(message, caption = message) {
+  const { ctx, width, height } = getCanvasSize(el.dasCanvas, 404);
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "rgba(8, 15, 31, 0.88)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#9fb3d9";
+  ctx.font = "14px Space Grotesk";
+  ctx.fillText(message, 20, 34);
+  if (el.dasCaption) {
+    el.dasCaption.textContent = caption;
+  }
+  state.geometry.das = null;
+}
+
+async function ensureDasWaterfallLoaded() {
+  const bundle = state.shotBundle;
+  const manifest = state.selectedManifest;
+  const manifestUrl = state.manifestSource;
+  const shotId = state.selectedShotId;
+  if (!bundle || !manifest || !manifestUrl || !shotId) {
+    return null;
+  }
+  if (bundle.dasWaterfall) {
+    return bundle.dasWaterfall;
+  }
+  const files = manifest.files || {};
+  const rel = files.das_waterfall_preview || files.das_preprocessed_preview || files.das_preprocessed_preview_file || "das_waterfall_preview.npz";
+  const cacheKey = `${shotId}|${rel}`;
+  if (state.dasWaterfallCache[cacheKey]) {
+    bundle.dasWaterfall = state.dasWaterfallCache[cacheKey];
+    return bundle.dasWaterfall;
+  }
+  if (state.dasWaterfallLoading[cacheKey]) {
+    return state.dasWaterfallLoading[cacheKey];
+  }
+
+  const loadSeq = state.shotLoadSeq;
+  const baseDir = getBaseDir(manifestUrl);
+  state.dasWaterfallLoading[cacheKey] = (async () => {
+    try {
+      const npz =
+        (rel && (await fetchNpzFromManifestPaths(baseDir, rel))) ||
+        (await fetchNpzFromManifestPaths(baseDir, "das_waterfall_preview.npz")) ||
+        (await fetchNpzFromManifestPaths(baseDir, "das_preprocessed_preview.npz"));
+      const built = buildDasWaterfallFromNpz(npz);
+      if (!built) {
+        throw new Error("Waterfall NPZ is missing data/t_s/channel_indices.");
+      }
+      state.dasWaterfallCache[cacheKey] = built;
+      if (state.shotLoadSeq === loadSeq && state.selectedShotId === shotId && state.shotBundle === bundle) {
+        bundle.dasWaterfall = built;
+        if (state.dasViewMode === "waterfall") {
+          renderDasPanel();
+        }
+      }
+      return built;
+    } catch (error) {
+      if (state.shotLoadSeq === loadSeq && state.selectedShotId === shotId && state.dasViewMode === "waterfall") {
+        renderDasStatusMessage("Waterfall preview not available. Run backend export.");
+        updateDataStatus(`Waterfall load failed for ${shotId}: ${summarizeError(error)}`);
+      }
+      return null;
+    } finally {
+      delete state.dasWaterfallLoading[cacheKey];
+    }
+  })();
+
+  return state.dasWaterfallLoading[cacheKey];
+}
+
+function scheduleDasWaterfallPrefetch() {
+  const loadSeq = state.shotLoadSeq;
+  const shotId = state.selectedShotId;
+  const run = () => {
+    if (state.shotLoadSeq !== loadSeq || state.selectedShotId !== shotId || !state.shotBundle) {
+      return;
+    }
+    ensureDasWaterfallLoaded();
+  };
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(run, { timeout: 2500 });
+  } else {
+    setTimeout(run, 700);
   }
 }
 
@@ -1675,8 +1174,6 @@ async function tryLoadJsonFromCandidates(relativePath, baseCandidates) {
     kind = "output";
   } else if (baseCandidates === ASSET_BASE_CANDIDATES.samples || baseCandidates === SAMPLE_BASE_CANDIDATES) {
     kind = "samples";
-  } else if (baseCandidates === ASSET_BASE_CANDIDATES.env || baseCandidates === ENV_BASE_CANDIDATES) {
-    kind = "env";
   }
   if (kind) {
     const res = await loadAssetJson(kind, relativePath);
@@ -2029,7 +1526,9 @@ function syncCursorToInterval() {
 
 function updateCurrentIntervalLabel() {
   const interval = getCurrentInterval();
-  el.metaCurrentInterval.textContent = `${formatSeconds(interval.start)} to ${formatSeconds(interval.end)}`;
+  if (el.metaCurrentInterval) {
+    el.metaCurrentInterval.textContent = `${formatSeconds(interval.start)} to ${formatSeconds(interval.end)}`;
+  }
   updateMapShotSummary();
 }
 
@@ -2195,6 +1694,9 @@ function getActiveEvent(cursorTime = state.cursorTime) {
 
 function renderActiveEventLabel() {
   const active = getActiveEvent();
+  if (!el.metaActiveEvent) {
+    return;
+  }
   if (!active) {
     el.metaActiveEvent.textContent = "None";
     return;
@@ -2245,11 +1747,11 @@ function renderManifestMetadata() {
   const recommended = getRecommendedInterval();
   const sourceGt = getSourceGroundTruth();
 
-  el.metaShot.textContent = shotId || "-";
-  el.metaTimeRange.textContent = `${formatSeconds(timeExtent.start)} to ${formatSeconds(timeExtent.end)}`;
-  el.metaRecommended.textContent = `${formatSeconds(recommended.start)} to ${formatSeconds(recommended.end)}`;
-  el.metaEventCount.textContent = Number.isFinite(state.eventCount) ? String(state.eventCount) : "Unknown";
-  el.metaGroundTruth.textContent = sourceGt.available ? "Available" : "Not available";
+  if (el.metaShot) el.metaShot.textContent = shotId || "-";
+  if (el.metaTimeRange) el.metaTimeRange.textContent = `${formatSeconds(timeExtent.start)} to ${formatSeconds(timeExtent.end)}`;
+  if (el.metaRecommended) el.metaRecommended.textContent = `${formatSeconds(recommended.start)} to ${formatSeconds(recommended.end)}`;
+  if (el.metaEventCount) el.metaEventCount.textContent = Number.isFinite(state.eventCount) ? String(state.eventCount) : "Unknown";
+  if (el.metaGroundTruth) el.metaGroundTruth.textContent = sourceGt.available ? "Available" : "Not available";
   renderActiveEventLabel();
 
   updateCurrentIntervalLabel();
@@ -2287,7 +1789,548 @@ function colorForDas(value) {
   return `rgb(${r}, ${g}, ${bch})`;
 }
 
+function syncDasModeControls() {
+  const mode = "waterfall";
+  state.dasViewMode = "waterfall";
+  if (el.dasHeading) {
+    el.dasHeading.textContent = `DAS Waterfall — ${shotSpeciesLabel()}`;
+  }
+  if (el.dasModeActivity) {
+    el.dasModeActivity.classList.toggle("active", mode === "activity");
+    el.dasModeActivity.setAttribute("aria-pressed", mode === "activity" ? "true" : "false");
+  }
+  if (el.dasModeWaterfall) {
+    el.dasModeWaterfall.classList.toggle("active", mode === "waterfall");
+    el.dasModeWaterfall.setAttribute("aria-pressed", mode === "waterfall" ? "true" : "false");
+  }
+}
+
+function setDasViewMode(mode) {
+  state.dasViewMode = mode === "waterfall" ? "waterfall" : "activity";
+  renderDasPanel();
+}
+
 function renderDasPanel() {
+  syncDasModeControls();
+  if (state.dasViewMode === "waterfall") {
+    if (!state.shotBundle?.dasWaterfall) {
+      renderDasStatusMessage("Loading DAS waterfall preview...", "Loading raw DAS waterfall preview...");
+      ensureDasWaterfallLoaded();
+      return;
+    }
+    renderDasWaterfallPanel();
+    return;
+  }
+  renderDasActivityPanel();
+}
+
+function getWaterfallValue(wf, timeIndex, channelIndex) {
+  const [a, b] = wf.shape;
+  if (wf.orientation === "time_channel") {
+    return wf.fortran
+      ? wf.data[channelIndex * a + timeIndex]
+      : wf.data[timeIndex * b + channelIndex];
+  }
+  return wf.fortran
+    ? wf.data[timeIndex * a + channelIndex]
+    : wf.data[channelIndex * b + timeIndex];
+}
+
+const DAS_WATERFALL_PALETTE_NAME = "darkSeismic";
+const DAS_WATERFALL_PALETTES = {
+  darkSeismic: {
+    stops: [
+      [-1.0, [0, 188, 255]],
+      [-0.68, [0, 125, 255]],
+      [-0.32, [10, 60, 180]],
+      [-0.14, [35, 15, 70]],
+      [0.0, [35, 15, 70]],
+      [0.14, [35, 15, 70]],
+      [0.34, [255, 0, 60]],
+      [0.70, [255, 80, 40]],
+      [1.0, [255, 200, 180]]
+    ]
+  },
+  deepOceanCoral: {
+    mode: "magnitude",
+    stops: [
+      [0.0, [4, 17, 31]],
+      [0.2, [11, 38, 56]],
+      [0.4, [21, 94, 117]],
+      [0.6, [45, 212, 191]],
+      [0.82, [251, 113, 133]],
+      [1.0, [255, 228, 230]]
+    ]
+  },
+  coralDepth: {
+    mode: "magnitude",
+    stops: [
+      [0.0, [4, 17, 31]],
+      [0.18, [18, 50, 74]],
+      [0.38, [64, 56, 92]],
+      [0.58, [151, 73, 92]],
+      [0.78, [238, 119, 94]],
+      [1.0, [255, 232, 214]]
+    ]
+  },
+  oceanViolet: {
+    mode: "magnitude",
+    stops: [
+      [0.0, [4, 17, 31]],
+      [0.22, [18, 50, 74]],
+      [0.45, [30, 91, 137]],
+      [0.68, [139, 92, 246]],
+      [0.86, [216, 180, 254]],
+      [1.0, [245, 239, 255]]
+    ]
+  },
+  oceanEmission: {
+    mode: "magnitude",
+    stops: [
+      [0.0, [5, 11, 20]],
+      [0.2, [10, 29, 51]],
+      [0.4, [18, 78, 120]],
+      [0.6, [31, 163, 201]],
+      [0.8, [99, 230, 255]],
+      [1.0, [178, 107, 255]]
+    ]
+  },
+  magmaEnergy: {
+    mode: "magnitude",
+    stops: [
+      [0.0, [2, 4, 20]],
+      [0.18, [31, 12, 72]],
+      [0.38, [91, 25, 103]],
+      [0.58, [181, 54, 84]],
+      [0.78, [251, 135, 60]],
+      [1.0, [252, 253, 191]]
+    ]
+  },
+  activityNeon: {
+    stops: [
+      [-1.0, [2, 10, 30]],
+      [-0.62, [0, 77, 220]],
+      [-0.25, [0, 221, 255]],
+      [0.0, [108, 255, 230]],
+      [0.22, [156, 255, 87]],
+      [0.55, [255, 230, 109]],
+      [1.0, [255, 79, 216]]
+    ]
+  },
+  siteGlow: {
+    negative: [35, 122, 236],
+    zero: [216, 232, 255],
+    positive: [255, 79, 216]
+  },
+  darkRelief: {
+    negative: [17, 80, 184],
+    zero: [190, 246, 255],
+    positive: [255, 132, 86]
+  },
+  midnightRelief: {
+    stops: [
+      [-1.0, [4, 16, 44]],
+      [-0.62, [14, 94, 214]],
+      [-0.28, [54, 218, 255]],
+      [0.0, [9, 22, 42]],
+      [0.30, [255, 198, 92]],
+      [0.68, [255, 111, 127]],
+      [1.0, [255, 79, 216]]
+    ]
+  },
+  teacherPlum: {
+    negative: [34, 74, 196],
+    zero: [75, 28, 104],
+    positive: [218, 58, 70]
+  },
+  lakeFire: {
+    stops: [
+      [-1.0, [7, 38, 99]],
+      [-0.62, [20, 112, 204]],
+      [-0.28, [101, 232, 255]],
+      [0.0, [8, 15, 31]],
+      [0.28, [255, 194, 88]],
+      [0.62, [255, 111, 91]],
+      [1.0, [255, 77, 136]]
+    ]
+  },
+  teacherClean: {
+    negative: [34, 74, 196],
+    zero: [229, 247, 255],
+    positive: [218, 58, 70]
+  },
+  teacherCoral: {
+    negative: [34, 74, 196],
+    zero: [232, 221, 246],
+    positive: [255, 88, 124]
+  }
+};
+
+function getDasWaterfallPalette() {
+  return DAS_WATERFALL_PALETTES[DAS_WATERFALL_PALETTE_NAME] || DAS_WATERFALL_PALETTES.teacherCoral;
+}
+
+function colorForDasWaterfall(value, limit) {
+  if (!Number.isFinite(value) || !Number.isFinite(limit) || limit <= 0) {
+    return [12, 20, 36, 255];
+  }
+  const palette = getDasWaterfallPalette();
+  const signedX = clamp(value / limit, -1, 1);
+  const x = palette.mode === "magnitude" ? Math.abs(signedX) : signedX;
+  if (Array.isArray(palette.stops)) {
+    const stops = palette.stops;
+    for (let i = 0; i < stops.length - 1; i += 1) {
+      const [x0, c0] = stops[i];
+      const [x1, c1] = stops[i + 1];
+      if (x >= x0 && x <= x1) {
+        const f = (x - x0) / Math.max(1e-9, x1 - x0);
+        return [
+          Math.round(c0[0] + (c1[0] - c0[0]) * f),
+          Math.round(c0[1] + (c1[1] - c0[1]) * f),
+          Math.round(c0[2] + (c1[2] - c0[2]) * f),
+          255
+        ];
+      }
+    }
+    const c = x < 0 ? stops[0][1] : stops[stops.length - 1][1];
+    return [c[0], c[1], c[2], 255];
+  }
+  if (x < 0) {
+    const f = x + 1;
+    const a = palette.negative;
+    const b = palette.zero;
+    return [
+      Math.round(a[0] + (b[0] - a[0]) * f),
+      Math.round(a[1] + (b[1] - a[1]) * f),
+      Math.round(a[2] + (b[2] - a[2]) * f),
+      255
+    ];
+  }
+  const f = x;
+  const a = palette.zero;
+  const b = palette.positive;
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * f),
+    Math.round(a[1] + (b[1] - a[1]) * f),
+    Math.round(a[2] + (b[2] - a[2]) * f),
+    255
+  ];
+}
+
+function formatWaterfallAxisNumber(value) {
+  if (!Number.isFinite(value)) {
+    return "-";
+  }
+  return Math.abs(value) >= 1000 ? String(Math.round(value)) : Number(value).toFixed(0);
+}
+
+function roundWaterfallLimit(value, wf) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+  const step = wf?.sourceKey === "data" ? 50 : 0.25;
+  return Math.max(step, Math.ceil(value / step) * step);
+}
+
+function buildWaterfallColorLookup(limit) {
+  const lim = Math.max(1, Math.round(limit));
+  const lookup = new Array(lim * 2 + 1);
+  for (let v = -lim; v <= lim; v += 1) {
+    lookup[v + lim] = colorForDasWaterfall(v, lim);
+  }
+  return { lim, lookup };
+}
+
+function lookupWaterfallColor(value, colorLookup) {
+  const v = Math.round(clamp(Number(value) || 0, -colorLookup.lim, colorLookup.lim));
+  return colorLookup.lookup[v + colorLookup.lim];
+}
+
+function drawDasEventShading(ctx, pad, plotW, plotH, interval) {
+  const events = getEventList();
+  ctx.save();
+  for (const ev of events) {
+    if (ev.end_time_s < interval.start || ev.start_time_s > interval.end) {
+      continue;
+    }
+    const x0 = pad.left + ((Math.max(ev.start_time_s, interval.start) - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
+    const x1 = pad.left + ((Math.min(ev.end_time_s, interval.end) - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
+    ctx.fillStyle = "rgba(255, 230, 109, 0.10)";
+    ctx.fillRect(x0, pad.top, Math.max(1, x1 - x0), plotH);
+  }
+  ctx.restore();
+}
+
+function shotSpeciesLabel() {
+  if (state.selectedShotId === "whales_orca") return "Orca";
+  if (state.selectedShotId === "whales_humpback") return "Humpback";
+  return state.selectedShotId || "Shot";
+}
+
+function renderDasWaterfallPanel() {
+  const { ctx, width, height } = getCanvasSize(el.dasCanvas, 404);
+  ctx.clearRect(0, 0, width, height);
+
+  const wf = state.shotBundle?.dasWaterfall;
+  const interval = getCurrentInterval();
+
+  ctx.fillStyle = "rgba(8, 15, 31, 0.88)";
+  ctx.fillRect(0, 0, width, height);
+
+  if (!wf?.data || !Array.isArray(wf.axes?.t_s) || !Array.isArray(wf.axes?.channel_indices)) {
+    ctx.fillStyle = "#9fb3d9";
+    ctx.font = "14px Space Grotesk";
+    ctx.fillText("Waterfall preview not available. Run backend export.", 20, 34);
+    el.dasCaption.textContent = "Waterfall preview not available. Run backend export.";
+    state.geometry.das = null;
+    return;
+  }
+
+  const t = wf.axes.t_s;
+  const channels = wf.axes.channel_indices;
+  const sampleIndices = Array.isArray(wf.axes.sample_indices) ? wf.axes.sample_indices : null;
+  const pad = { left: 62, right: 104, top: 12, bottom: 36 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const viewInterval = { start: t[0], end: t[t.length - 1] };
+  const i0 = 0;
+  const i1 = t.length - 1;
+
+  if (i1 < i0) {
+    ctx.fillStyle = "#9fb3d9";
+    ctx.font = "14px Space Grotesk";
+    ctx.fillText("Selected interval has no DAS waterfall samples.", 20, 34);
+    el.dasCaption.textContent = `No DAS waterfall samples in ${interval.start.toFixed(2)}-${interval.end.toFixed(2)} s.`;
+    state.geometry.das = null;
+    return;
+  }
+
+  const nRows = channels.length;
+  const nRawCols = i1 - i0 + 1;
+  const renderCols = Math.max(1, Math.min(Math.floor(plotW), nRawCols));
+  const renderRows = Math.max(1, Math.min(Math.floor(plotH), nRows));
+  const timeIndices = [];
+  for (let col = 0; col < renderCols; col += 1) {
+    const idx = i0 + Math.floor((col / Math.max(1, renderCols - 1)) * (nRawCols - 1));
+    timeIndices.push(idx);
+  }
+
+  const renderKey = `${wf.sourceKey}|${wf.shape.join("x")}|${renderCols}x${renderRows}|${DAS_WATERFALL_PALETTE_NAME}`;
+  let limit;
+  let offscreen;
+  if (wf.renderCache?.key === renderKey) {
+    limit = wf.renderCache.limit;
+    offscreen = wf.renderCache.offscreen;
+    wf.colorScale = wf.renderCache.colorScale;
+  } else {
+    const samples = [];
+    const rowStep = Math.max(1, Math.floor(nRows / 160));
+    const sampleColStep = Math.max(1, Math.floor(renderCols / 700));
+    for (let c = 0; c < renderCols; c += sampleColStep) {
+      for (let row = 0; row < nRows; row += rowStep) {
+        const v = getWaterfallValue(wf, timeIndices[Math.min(c, timeIndices.length - 1)], row);
+        if (Number.isFinite(v)) samples.push(v);
+      }
+    }
+    samples.sort((a, b) => a - b);
+    const pLow = wf.sourceKey === "data" ? 0.10 : 0.05;
+    const pHigh = wf.sourceKey === "data" ? 0.90 : 0.95;
+    const qLo = quantileFromSorted(samples, pLow);
+    const qHi = quantileFromSorted(samples, pHigh);
+    limit = roundWaterfallLimit(Math.max(Math.abs(qLo || 0), Math.abs(qHi || 0), 1e-6), wf);
+    const colorScale = { mode: "symmetric_percentile", pLow: pLow * 100, pHigh: pHigh * 100, vmin: -limit, vmax: limit };
+    wf.colorScale = colorScale;
+    console.info(`[das-waterfall] color scale p${String(Math.round(pLow * 100)).padStart(2, "0")}=${Number(qLo).toFixed(4)} p${Math.round(pHigh * 100)}=${Number(qHi).toFixed(4)} clip=±${limit.toFixed(4)}`);
+
+    const colorLookup = buildWaterfallColorLookup(limit);
+    const image = ctx.createImageData(renderCols, renderRows);
+    for (let pxRow = 0; pxRow < renderRows; pxRow += 1) {
+      const row0 = Math.floor((pxRow / renderRows) * nRows);
+      const row1 = Math.max(row0 + 1, Math.floor(((pxRow + 1) / renderRows) * nRows));
+      for (let pxCol = 0; pxCol < renderCols; pxCol += 1) {
+        const t0 = i0 + Math.floor((pxCol / renderCols) * nRawCols);
+        const t1 = Math.max(t0 + 1, i0 + Math.floor(((pxCol + 1) / renderCols) * nRawCols));
+        let rSum = 0;
+        let gSum = 0;
+        let bSum = 0;
+        let count = 0;
+        for (let ti = t0; ti < t1; ti += 1) {
+          for (let row = row0; row < row1; row += 1) {
+            const rgba = lookupWaterfallColor(getWaterfallValue(wf, ti, row), colorLookup);
+            rSum += rgba[0];
+            gSum += rgba[1];
+            bSum += rgba[2];
+            count += 1;
+          }
+        }
+        const off = (pxRow * renderCols + pxCol) * 4;
+        const denom = Math.max(1, count);
+        image.data[off] = Math.round(rSum / denom);
+        image.data[off + 1] = Math.round(gSum / denom);
+        image.data[off + 2] = Math.round(bSum / denom);
+        image.data[off + 3] = 255;
+      }
+    }
+
+    offscreen = document.createElement("canvas");
+    offscreen.width = renderCols;
+    offscreen.height = renderRows;
+    offscreen.getContext("2d").putImageData(image, 0, 0);
+    wf.renderCache = { key: renderKey, limit, offscreen, colorScale };
+  }
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(offscreen, pad.left, pad.top, plotW, plotH);
+  drawDasEventShading(ctx, pad, plotW, plotH, viewInterval);
+
+  const selected = getSelectedChannelSummary();
+  const rawMatch = String(selected.channel || "").match(/raw\s+(-?\d+)/);
+  const selectedRaw = rawMatch ? Number(rawMatch[1]) : null;
+  const selectedRow = Number.isFinite(selectedRaw) ? channels.findIndex((v) => Number(v) === selectedRaw) : -1;
+  if (selectedRow >= 0) {
+    const y = pad.top + (selectedRow + 0.5) / nRows * plotH;
+    ctx.strokeStyle = "rgba(255, 230, 109, 0.92)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(pad.left + plotW, y);
+    ctx.stroke();
+  }
+
+  if (state.cursorTime >= viewInterval.start && state.cursorTime <= viewInterval.end) {
+    const cursorNorm = (state.cursorTime - viewInterval.start) / Math.max(0.0001, viewInterval.end - viewInterval.start);
+    const cursorX = pad.left + clamp(cursorNorm, 0, 1) * plotW;
+    ctx.strokeStyle = "rgba(255, 230, 109, 0.95)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cursorX, pad.top);
+    ctx.lineTo(cursorX, pad.top + plotH);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = "rgba(114, 246, 255, 0.35)";
+  ctx.strokeRect(pad.left, pad.top, plotW, plotH);
+
+  const barX = pad.left + plotW + 22;
+  const barW = 12;
+  const barH = Math.min(180, plotH);
+  const barY = pad.top + (plotH - barH) / 2;
+  const grad = ctx.createLinearGradient(0, barY + barH, 0, barY);
+  const palette = getDasWaterfallPalette();
+  if (Array.isArray(palette.stops) && palette.mode === "magnitude") {
+    for (const [pos, c] of palette.stops) {
+      grad.addColorStop(pos, `rgb(${c[0]}, ${c[1]}, ${c[2]})`);
+    }
+  } else if (Array.isArray(palette.stops)) {
+    for (const [pos, c] of palette.stops) {
+      grad.addColorStop((pos + 1) / 2, `rgb(${c[0]}, ${c[1]}, ${c[2]})`);
+    }
+  } else {
+    grad.addColorStop(0, `rgb(${palette.negative[0]}, ${palette.negative[1]}, ${palette.negative[2]})`);
+    grad.addColorStop(0.5, `rgb(${palette.zero[0]}, ${palette.zero[1]}, ${palette.zero[2]})`);
+    grad.addColorStop(1, `rgb(${palette.positive[0]}, ${palette.positive[1]}, ${palette.positive[2]})`);
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(barX, barY, barW, barH);
+  ctx.strokeStyle = "rgba(212, 227, 255, 0.55)";
+  ctx.strokeRect(barX, barY, barW, barH);
+
+  ctx.fillStyle = "#d4e3ff";
+  ctx.font = "11px Space Grotesk";
+  const sampleOrigin = sampleIndices ? Number(sampleIndices[timeIndices[0]]) : null;
+  const axisStart = sampleIndices ? 0 : interval.start;
+  const axisEnd = sampleIndices
+    ? Number(sampleIndices[timeIndices[timeIndices.length - 1]]) - sampleOrigin
+    : interval.end;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  let xTicks = [];
+  if (sampleIndices && axisEnd >= 10000) {
+    const step = axisEnd >= 25000 ? 5000 : 2500;
+    for (let v = 0; v <= axisEnd; v += step) {
+      xTicks.push(v);
+    }
+  } else {
+    const xTickCount = 5;
+    for (let k = 0; k < xTickCount; k += 1) {
+      const frac = xTickCount === 1 ? 0 : k / (xTickCount - 1);
+      xTicks.push(axisStart + (axisEnd - axisStart) * frac);
+    }
+  }
+  for (const v of xTicks) {
+    const frac = (v - axisStart) / Math.max(1e-9, axisEnd - axisStart);
+    const x = pad.left + clamp(frac, 0, 1) * plotW;
+    ctx.fillText(formatWaterfallAxisNumber(v), x, pad.top + plotH + 8);
+  }
+  ctx.fillText(sampleIndices ? "Time Sample Index" : "Time (s)", pad.left + plotW / 2, height - 14);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+
+  const barTicks = palette.mode === "magnitude"
+    ? [0, limit / 4, limit / 2, (3 * limit) / 4, limit]
+    : [-limit, -limit / 2, 0, limit / 2, limit];
+  ctx.font = "10px Space Grotesk";
+  for (const tick of barTicks) {
+    const y = palette.mode === "magnitude"
+      ? barY + (1 - tick / Math.max(1e-9, limit)) * barH
+      : barY + (1 - (tick + limit) / (2 * limit)) * barH;
+    ctx.strokeStyle = "rgba(212, 227, 255, 0.72)";
+    ctx.beginPath();
+    ctx.moveTo(barX + barW, y);
+    ctx.lineTo(barX + barW + 5, y);
+    ctx.stroke();
+    const prefix = palette.mode !== "magnitude" && tick > 0 ? "+" : "";
+    ctx.fillText(`${prefix}${formatWaterfallAxisNumber(tick)}`, barX + barW + 9, y + 3);
+  }
+  ctx.save();
+  ctx.translate(barX + barW + 46, barY + barH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.fillText("Amplitude", 0, 0);
+  ctx.restore();
+
+  ctx.font = "11px Space Grotesk";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  const yTicks = [0, 200, 400, 600, 800, channels[channels.length - 1]].filter((v, idx, arr) => arr.indexOf(v) === idx);
+  for (const tick of yTicks) {
+    const rowIdx = channels.findIndex((v) => Number(v) >= tick);
+    const idx = rowIdx >= 0 ? rowIdx : channels.length - 1;
+    const y = pad.top + (idx / Math.max(1, nRows - 1)) * plotH;
+    ctx.fillText(String(tick), pad.left - 10, y);
+  }
+  ctx.save();
+  ctx.translate(22, pad.top + plotH / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.fillText("Channel Index", 0, 0);
+  ctx.restore();
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+
+  state.geometry.das = {
+    mode: "waterfall",
+    t,
+    distances: wf.axes.distances_m || channels,
+    channels,
+    matrix: null,
+    waterfall: wf,
+    timeIndices,
+    sampleIndices,
+    sampleOrigin,
+    interval: viewInterval,
+    pad,
+    plotW,
+    plotH,
+    width,
+    height,
+    colorLimit: limit
+  };
+  el.dasCaption.textContent =
+    `DAS Waterfall — ${shotSpeciesLabel()}: ${wf.amplitudeUnits} waterfall context, ` +
+    `${nRows} channels, preview ${viewInterval.start.toFixed(2)}-${viewInterval.end.toFixed(2)} s. Not a whale detector.`;
+}
+
+function renderDasActivityPanel() {
   const { ctx, width, height } = getCanvasSize(el.dasCanvas, 404);
   ctx.clearRect(0, 0, width, height);
 
@@ -2338,7 +2381,7 @@ function renderDasPanel() {
   const cellW = plotW / Math.max(1, nCols);
   const cellH = plotH / Math.max(1, nRows);
 
-  state.geometry.das = { t, distances, matrix, timeIndices, interval, pad, plotW, plotH, width, height };
+  state.geometry.das = { mode: "activity", t, distances, matrix, timeIndices, interval, pad, plotW, plotH, width, height };
 
   for (let row = 0; row < nRows; row += 1) {
     for (let col = 0; col < nCols; col += 1) {
@@ -3443,6 +3486,9 @@ function bindMapZoomButtonHandlers() {
 }
 
 function renderEventNavigation() {
+  if (!el.eventNav) {
+    return;
+  }
   const events = getEventList();
   const current = getCurrentInterval();
 
@@ -3496,7 +3542,7 @@ function renderEventNavigation() {
   }
 
   const overlapCount = events.filter((event) => event.end_time_s >= current.start && event.start_time_s <= current.end).length;
-  el.dataStatus.textContent = `Selected shot ${state.selectedShotId}; interval ${current.start.toFixed(2)}-${current.end.toFixed(2)} s; ${overlapCount} candidate event(s) overlap.`;
+  updateDataStatus(`Selected shot ${state.selectedShotId}; interval ${current.start.toFixed(2)}-${current.end.toFixed(2)} s; ${overlapCount} candidate event(s) overlap.`);
 }
 
 function hitTestDas(event) {
@@ -3505,7 +3551,7 @@ function hitTestDas(event) {
     return null;
   }
 
-  const { pad, plotW, plotH, timeIndices, distances, matrix } = geo;
+  const { pad, plotW, plotH } = geo;
   const x = event.offsetX;
   const y = event.offsetY;
 
@@ -3513,17 +3559,31 @@ function hitTestDas(event) {
     return null;
   }
 
+  const { timeIndices, distances, matrix } = geo;
+
   const col = clamp(Math.floor(((x - pad.left) / plotW) * timeIndices.length), 0, timeIndices.length - 1);
-  const rowFromTop = clamp(Math.floor(((y - pad.top) / plotH) * distances.length), 0, distances.length - 1);
-  const row = distances.length - rowFromTop - 1;
+  const axis = geo.mode === "waterfall" ? geo.channels : distances;
+  const rowFromTop = clamp(Math.floor(((y - pad.top) / plotH) * axis.length), 0, axis.length - 1);
+  const row = geo.mode === "waterfall" ? rowFromTop : axis.length - rowFromTop - 1;
   const timeIndex = timeIndices[col];
   const time = geo.t[timeIndex];
-  const distance = distances[row];
-  const value = matrix[timeIndex]?.[row] ?? 0;
+  const sampleIndex = geo.sampleIndices?.[timeIndex];
+  const sampleOffset = Number.isFinite(Number(sampleIndex)) && Number.isFinite(Number(geo.sampleOrigin))
+    ? Number(sampleIndex) - Number(geo.sampleOrigin)
+    : null;
+  const distance = distances?.[row] ?? axis[row];
+  const channel = geo.channels?.[row];
+  const value = geo.mode === "waterfall"
+    ? getWaterfallValue(geo.waterfall, timeIndex, row)
+    : matrix[timeIndex]?.[row] ?? 0;
 
   return {
+    mode: geo.mode || "activity",
     time,
+    sampleIndex,
+    sampleOffset,
     distance,
+    channel,
     value,
     clientX: event.clientX,
     clientY: event.clientY
@@ -4584,9 +4644,19 @@ function updateHoverTooltipFromDAS(event) {
       return;
     }
 
+    const isWaterfall = hit.mode === "waterfall";
+    const axisLine = isWaterfall
+      ? `Raw channel ${Number(hit.channel).toFixed(0)}`
+      : `Distance ${hit.distance.toFixed(1)} m`;
+    const timeLine = isWaterfall && Number.isFinite(Number(hit.sampleOffset))
+      ? `Sample ${formatWaterfallAxisNumber(Number(hit.sampleOffset))} (${hit.time.toFixed(2)} s)`
+      : `Time ${hit.time.toFixed(2)} s`;
+    const valueLine = isWaterfall
+      ? `Amplitude ${Number(hit.value).toFixed(3)}`
+      : `Normalized activity ${Number(hit.value).toFixed(3)}`;
     showTooltip(
-      "DAS activity",
-      `Time ${hit.time.toFixed(2)} s<br>Distance ${hit.distance.toFixed(1)} m<br>Normalized activity ${Number(hit.value).toFixed(3)}<br>Interval ${getCurrentInterval().start.toFixed(2)}-${getCurrentInterval().end.toFixed(2)} s`,
+      isWaterfall ? "DAS waterfall" : "DAS activity",
+      `${timeLine}<br>${axisLine}<br>${valueLine}<br>Interval ${getCurrentInterval().start.toFixed(2)}-${getCurrentInterval().end.toFixed(2)} s`,
       hit.clientX,
       hit.clientY
     );
@@ -4614,8 +4684,15 @@ function updateHoverTooltipFromHydro(event) {
 async function onShotChanged() {
   const selectedShotId = el.shotSelect.value;
   const shotOption = state.shotOptions.find((option) => option.shotId === selectedShotId);
+  const loadSeq = state.shotLoadSeq + 1;
+  state.shotLoadSeq = loadSeq;
   state.selectedShotId = selectedShotId;
+  state.selectedManifest = null;
+  state.manifestSource = null;
+  state.shotBundle = null;
+  state.eventCount = null;
   hideTooltip();
+  renderDasStatusMessage("Loading synchronized bundle...", "Loading synchronized DAS context...");
 
   if (!shotOption) {
     updateDataStatus("No shot option selected.");
@@ -4627,14 +4704,27 @@ async function onShotChanged() {
   updateDataStatus(`Loading synchronized bundle for ${selectedShotId}...`);
 
   const manifestResult = await loadManifestForShot(shotOption);
+  if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
+    return;
+  }
   state.selectedManifest = manifestResult.data;
   state.manifestSource = manifestResult.url;
 
   try {
     if (manifestResult.data && manifestResult.url) {
-      state.shotBundle = await loadBundleFromManifest(manifestResult.data, manifestResult.url);
-      await attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, state.shotBundle);
-      state.shotBundle.selectedChannel = await loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url);
+      const bundle = await loadBundleFromManifest(manifestResult.data, manifestResult.url);
+      if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
+        return;
+      }
+      await attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, bundle);
+      if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
+        return;
+      }
+      bundle.selectedChannel = await loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url);
+      if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
+        return;
+      }
+      state.shotBundle = bundle;
       resetMapViewport();
       resetMapTimelineForShot();
       state.eventCount = getEventList().length;
@@ -4642,6 +4732,7 @@ async function onShotChanged() {
       renderManifestMetadata();
       renderAllPanels();
       scheduleMapRender();
+      scheduleDasWaterfallPrefetch();
       if (state.shotBundle.missingCompatibilityFiles?.length) {
         updateDataStatus(
           `Loaded synchronized viewer bundle for ${selectedShotId}, but missing compatibility files: ${state.shotBundle.missingCompatibilityFiles.join(", ")}.`
@@ -4653,6 +4744,9 @@ async function onShotChanged() {
     }
 
     const fallbackBundle = await loadFallbackBundle(selectedShotId);
+    if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
+      return;
+    }
     if (fallbackBundle) {
       state.shotBundle = fallbackBundle;
       state.shotBundle.selectedChannel = {
@@ -4674,7 +4768,9 @@ async function onShotChanged() {
 
     state.shotBundle = null;
     state.eventCount = null;
-    el.eventNav.innerHTML = "";
+    if (el.eventNav) {
+      el.eventNav.innerHTML = "";
+    }
     el.dasCaption.textContent = "No synchronized data loaded.";
     el.hydroCaption.textContent = "No synchronized data loaded.";
     el.mapCaption.textContent = "No synchronized data loaded.";
@@ -4711,6 +4807,8 @@ function bindEvents() {
   });
   el.intervalResetBtn.addEventListener("click", resetIntervalToRecommended);
   el.shotSelect.addEventListener("change", onShotChanged);
+  el.dasModeActivity?.addEventListener("click", () => setDasViewMode("activity"));
+  el.dasModeWaterfall?.addEventListener("click", () => setDasViewMode("waterfall"));
 
   el.dasCanvas.addEventListener("mousemove", updateHoverTooltipFromDAS, { passive: true });
   el.dasCanvas.addEventListener("mousedown", (event) => {
@@ -4804,15 +4902,10 @@ function bindEvents() {
   bindMapTimelineHandlers();
   bindMapZoomButtonHandlers();
 
-  bindEnvironmentalPanelHandlers();
-
   window.addEventListener("resize", () => {
     if (state.shotBundle) {
       renderAllPanels();
       scheduleMapRender();
-    }
-    if (state.environmental?.mapNpz && state.environmental?.layout) {
-      renderEnvironmentalPanels();
     }
   });
 }
@@ -4852,22 +4945,6 @@ async function initialize() {
   if (state.shotOptions.length > 0) {
     el.shotSelect.value = state.shotOptions[0].shotId;
     await onShotChanged();
-  }
-
-  try {
-    await loadEnvironmentalMvp();
-  } catch (err) {
-    console.warn("Environmental MVP load failed:", err);
-    if (el.envUnavailable) {
-      el.envUnavailable.hidden = false;
-      const p = el.envUnavailable.querySelector("p");
-      if (p) {
-        p.textContent = `Environmental load error: ${summarizeError(err)}`;
-      }
-    }
-    if (el.envContent) {
-      el.envContent.hidden = true;
-    }
   }
 
   /* Diagnostics summary so it is obvious which paths actually worked. */
