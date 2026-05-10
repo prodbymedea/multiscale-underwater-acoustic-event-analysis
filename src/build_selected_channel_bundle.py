@@ -11,11 +11,13 @@ Outputs (under output/shots/<shot>/):
   - selected_channel_p<col>_{signal,spectrogram,bandpass_score}.npz per exported column
   - selected_channel_bundle.json — metadata for default preview column
   - selected_channel_{signal,spectrogram,bandpass_score}.npz — copy of default column (backward compatible)
-  - whales_orca only: signal NPZs include bandpass_waveform; orca_source_segment.wav + orca_audio_compare.json
-    (source segment time-aligned to DAS preprocessing window for viewer demo playback).
+  - Both whales shots: signal NPZs include bandpass_waveform for browser DAS demo playback.
+  - Source-vs-DAS reference WAV + JSON (time-aligned to DAS preprocessing window):
+    Orca → `orca_source_segment.wav` + `orca_audio_compare.json` + `files.orca_audio_compare`;
+    Humpback → `humpback_source_segment.wav` + `humpback_audio_compare.json` + `files.source_audio_compare`.
 
 Patches viewer_manifest.json with `files.selected_channels_index`, `selected_channel_demo` (v2 when >1 col),
-and `files.orca_audio_compare` for Orca.
+and the shot-appropriate audio compare key above.
 
 Usage:
   python3 src/build_selected_channel_bundle.py --shot whales_orca
@@ -324,27 +326,71 @@ def _patch_viewer_manifest(
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
 
-def _patch_manifest_orca_audio_compare(shot_dir: Path, compare_json_name: str) -> None:
-    """Register orca_audio_compare.json in viewer_manifest.files if manifest exists."""
+def _patch_manifest_audio_compare(
+    shot_dir: Path, compare_json_name: str, manifest_key: str, note_tag: str
+) -> None:
+    """Register audio compare JSON in viewer_manifest.files if manifest exists."""
     man_p = shot_dir / "viewer_manifest.json"
     if not man_p.is_file():
         return
     with open(man_p, encoding="utf-8") as f:
         manifest: dict[str, Any] = json.load(f)
     files = manifest.setdefault("files", {})
-    files["orca_audio_compare"] = compare_json_name
+    files[manifest_key] = compare_json_name
     notes = manifest.setdefault("notes", [])
-    tag = "orca_audio_compare: source WAV segment time-aligned to DAS preprocessing window (demo only)."
-    if isinstance(notes, list) and tag not in notes:
-        notes.append(tag)
+    if isinstance(notes, list) and note_tag not in notes:
+        notes.append(note_tag)
     with open(man_p, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
 
-def export_orca_source_compare_audio(shot_dir: Path, h5_path: Path) -> None:
+def _write_source_playback_wav_trim_leading_silence(
+    seg_i16: np.ndarray,
+    fs_src: int,
+    wav_path_playback: Path,
+    *,
+    peak_fraction: float = 0.01,
+    pre_roll_s: float = 0.1,
+) -> dict[str, Any] | None:
     """
-    Write orca_source_segment.wav + orca_audio_compare.json for source-vs-DAS demo playback.
+    Write a playback-only copy with leading silence removed (in-file zeros / quiet run-in).
+    Original aligned segment must stay untouched elsewhere.
+
+    Onset: first sample where |x| >= peak_fraction * max(|x|). Pre-roll keeps pre_roll_s
+    of audio before that onset when possible.
+
+    Returns trim metadata dict for JSON, or None if no separate playback file was written.
+    """
+    x = np.abs(seg_i16.astype(np.float64))
+    peak = float(np.max(x))
+    if peak <= 0:
+        return None
+    thr = peak_fraction * peak
+    above = x >= thr
+    if not np.any(above):
+        return None
+    onset = int(np.argmax(above))
+    preroll = max(0, int(round(float(pre_roll_s) * fs_src)))
+    start = max(0, onset - preroll)
+    if start <= 0:
+        return None
+    trimmed = seg_i16[start:]
+    wavfile.write(str(wav_path_playback), int(round(fs_src)), trimmed)
+    return {
+        "pre_roll_s": float(pre_roll_s),
+        "peak_fraction_threshold": float(peak_fraction),
+        "onset_sample_in_full_segment": int(onset),
+        "playback_starts_at_sample": int(start),
+        "removed_leading_s": float(start) / float(fs_src),
+        "playback_wav_samples": int(trimmed.shape[0]),
+    }
+
+
+def export_source_compare_audio(shot_dir: Path, h5_path: Path, shot_id: str) -> None:
+    """
+    Write source reference WAV + *audio_compare.json for source-vs-DAS demo playback.
     Segment uses das_preprocessing_metadata selected_interval start_time_s/end_time_s (DAS-relative seconds).
+    Schema remains orca_audio_compare_v1 for frontend compatibility; shot_id distinguishes shots.
     """
     meta_p = shot_dir / "das_preprocessing_metadata.json"
     if not meta_p.is_file() or not h5_path.is_file():
@@ -372,12 +418,39 @@ def export_orca_source_compare_audio(shot_dir: Path, h5_path: Path) -> None:
     seg = src_full[i0:i1]
     peak = float(np.max(np.abs(seg))) + 1e-12
     seg_i16 = np.clip(seg / peak * 0.95 * 32767.0, -32768, 32767).astype(np.int16)
-    wav_path = shot_dir / "orca_source_segment.wav"
+
+    if shot_id == "whales_orca":
+        wav_name = "orca_source_segment.wav"
+        wav_playback_name = "orca_source_segment_playback.wav"
+        json_name = "orca_audio_compare.json"
+        manifest_key = "orca_audio_compare"
+        note_tag = "orca_audio_compare: source WAV segment time-aligned to DAS preprocessing window (demo only)."
+        interpretation = (
+            "Source: dataset 'Sound pressure @1m' reference. DAS: band-limited, received strain-related "
+            "channel (demo playback). Compare for distortion/sparsity illustration, not validated bioacoustic truth."
+        )
+    elif shot_id == "whales_humpback":
+        wav_name = "humpback_source_segment.wav"
+        wav_playback_name = "humpback_source_segment_playback.wav"
+        json_name = "humpback_audio_compare.json"
+        manifest_key = "source_audio_compare"
+        note_tag = (
+            "source_audio_compare: Humpback source WAV segment time-aligned to DAS preprocessing window (demo only)."
+        )
+        interpretation = (
+            "Source: dataset 'Sound pressure @1m' reference. DAS: band-limited, received strain-related "
+            "channel (demo playback). Humpback DAS is often weaker and noisier than Orca on selected channels—"
+            "compare for structure and sparsity only, not validated bioacoustic truth."
+        )
+    else:
+        return
+
+    wav_path = shot_dir / wav_name
     wavfile.write(str(wav_path), int(round(fs_src)), seg_i16)
 
     doc: dict[str, Any] = {
         "schema_version": "orca_audio_compare_v1",
-        "shot_id": "whales_orca",
+        "shot_id": shot_id,
         "source_wav_file": wav_path.name,
         "source_sample_rate_hz": int(round(fs_src)),
         "time_range_s_das_axis": [t0, t1],
@@ -385,15 +458,25 @@ def export_orca_source_compare_audio(shot_dir: Path, h5_path: Path) -> None:
             "Indices floor(t0×fs_source):ceil(t1×fs_source) using DAS preprocessing start_time_s/end_time_s "
             "(seconds from DAS trace origin in export). Experimental reference only."
         ),
-        "interpretation": (
-            "Source: dataset 'Sound pressure @1m' reference. DAS: band-limited, received strain-related "
-            "channel (demo playback). Compare for distortion/sparsity illustration, not validated bioacoustic truth."
-        ),
+        "interpretation": interpretation,
     }
-    json_path = shot_dir / "orca_audio_compare.json"
+
+    playback_path = shot_dir / wav_playback_name
+    trim_meta = _write_source_playback_wav_trim_leading_silence(
+        seg_i16, int(round(fs_src)), playback_path
+    )
+    if trim_meta is not None:
+        doc["source_wav_playback_file"] = playback_path.name
+        doc["source_playback_trim"] = trim_meta
+        doc["source_playback_note"] = (
+            "source_wav_playback_file is for browser convenience only: leading silence removed "
+            "(first sample reaching >= peak_fraction_threshold × max|sample|), with pre_roll_s kept before onset. "
+            "source_wav_file remains the full DAS-interval-aligned segment for any comparison that needs exact alignment."
+        )
+    json_path = shot_dir / json_name
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2, ensure_ascii=False)
-    _patch_manifest_orca_audio_compare(shot_dir, json_path.name)
+    _patch_manifest_audio_compare(shot_dir, json_path.name, manifest_key, note_tag)
 
 
 def _parse_band(s: str) -> tuple[float, float]:
@@ -470,14 +553,13 @@ def _export_preview_column_npzs(
         "distance_m": np.float32(dist_m),
         "fs_hz": np.float32(fs_hz),
     }
-    # Orca: band-pass waveform (same band as score) for browser demo playback — not "whale in water".
-    if shot_id == "whales_orca":
-        bp_wf = (filtered - np.median(filtered)).astype(np.float32)
-        sig_payload["bandpass_waveform"] = bp_wf
-        sig_payload["bandpass_waveform_hz"] = np.array([f_lo, f_hi], dtype=np.float32)
-        sig_payload["bandpass_waveform_note"] = np.array(
-            "median_centered_bandpass_for_demo_playback; received_DAS_not_acoustic_pressure"
-        )
+    # Whales: band-pass waveform (same band as score) for browser demo playback — not "whale in water".
+    bp_wf = (filtered - np.median(filtered)).astype(np.float32)
+    sig_payload["bandpass_waveform"] = bp_wf
+    sig_payload["bandpass_waveform_hz"] = np.array([f_lo, f_hi], dtype=np.float32)
+    sig_payload["bandpass_waveform_note"] = np.array(
+        "median_centered_bandpass_for_demo_playback; received_DAS_not_acoustic_pressure"
+    )
     np.savez_compressed(sig_path, **sig_payload)
     np.savez_compressed(
         spec_path,
@@ -803,7 +885,8 @@ def main() -> None:
             "notes": [
                 "Maps preview_column to per-channel NPZ triples for selected-channel Stage-2 viewer.",
                 "Legacy filenames selected_channel_*.npz duplicate the default_preview_col exports.",
-                "Orca includes NCC-guided raw resolve targets (859, 861, 862, 920) → nearest preview grid; see docs/orca_ncc_summary.md.",
+                "Both whales shots export bandpass_waveform for DAS demo audio; source WAV/JSON uses files.orca_audio_compare (Orca) or files.source_audio_compare (Humpback).",
+                "Orca-only: NCC-guided raw resolve targets (859, 861, 862, 920) → nearest preview grid; see docs/orca_ncc_summary.md.",
             ],
         }
         index_path = shot_dir / "selected_channels_index.json"
@@ -822,8 +905,7 @@ def main() -> None:
             available_preview_cols=list(preview_cols),
         )
 
-    if shot_id == "whales_orca":
-        export_orca_source_compare_audio(shot_dir, h5_path)
+    export_source_compare_audio(shot_dir, h5_path, shot_id)
 
     print(f"Exported preview columns: {preview_cols} (default={default_preview_col}) band={f_lo}-{f_hi} Hz")
     if index_path is not None:

@@ -291,6 +291,7 @@ def build_manifest(shot: str) -> dict[str, Any]:
         "selected_channel_bandpass_score",
         "selected_channels_index",
         "orca_audio_compare",
+        "source_audio_compare",
         "das_waterfall_metadata",
         "das_preprocessed_preview_file",
     )

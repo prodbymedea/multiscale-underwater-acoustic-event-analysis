@@ -129,14 +129,15 @@ python src/test_orca_bandpass_baseline.py
 
 See `docs/orca_bandpass_baseline.md` for Nyquist limits vs preview-rate NPZ.
 
-**Selected-channel demo bundle (Orca, default preview col 189 / raw ch 945):**
+**Selected-channel demo bundle (both whales shots):**
 
 ```bash
 python src/build_selected_channel_bundle.py --shot whales_orca
 python src/build_selected_channel_bundle.py --shot whales_orca --preview-col 189 --band 2000-2350
+python src/build_selected_channel_bundle.py --shot whales_humpback
 ```
 
-Writes `output/shots/whales_orca/selected_channel_*.npz` and patches `viewer_manifest.json` with `selected_channel_demo` (use `--no-patch-manifest` to skip).
+Writes per-shot selected-channel NPZs (including `bandpass_waveform` for browser audio) and source-reference WAV/JSON for both whales shots; patches `viewer_manifest.json` with `selected_channel_demo` and `orca_audio_compare` or `source_audio_compare` (use `--no-patch-manifest` to skip).
 
 **DAS activity representation (rolling RMS map from preprocessed DAS):**
 

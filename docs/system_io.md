@@ -113,9 +113,11 @@ Exact numeric mappings are always defined by the generated `selected_channel_bun
 
 **Environmental Delft3D NetCDF (local `data/raw/environment/`, gitignored):** see `docs/environmental_nc_inventory.md` and `docs/environmental_data_audit.md`. After running `src/export_environmental_mvp.py`, compact MVP artifacts appear under **`output/environmental/`** (gitignored): `environmental_mvp_meta.json`, `environmental_map_fields.npz` (model-frame `XZ`/`YZ`, time, `u_face_t`/`v_face_t`, **`temperature_t`** primary scalar, **`thermocline_t`** secondary), and `environmental_fiber_timeseries.npz` (shared `time_s` plus **empty** fiber-aligned arrays until CRS alignment is validated). The static-site environmental block renders scalars and flow in **model grid index space** (readable inspection heatmaps); it does not treat `XZ`/`YZ` as a geographic map until coordinate handling is validated.
 
-**Orca source-vs-DAS demo audio (optional, after `build_selected_channel_bundle.py`):**
-- `orca_source_segment.wav` — mono int16 WAV, experimental **Source** HDF5 segment aligned to `das_preprocessing_metadata.json` `selected_interval` (`start_time_s` / `end_time_s` on the DAS axis, resampled by sample index at source `Sample Rate (Hz)`).
-- `orca_audio_compare.json` — schema `orca_audio_compare_v1`: paths, sample rate, interpretation notes; referenced from `viewer_manifest.json` as `files.orca_audio_compare`.
+**Whales source-vs-DAS demo audio (after `build_selected_channel_bundle.py`; same frontend path for both shots):**
+- **Orca:** `orca_source_segment.wav` + `orca_audio_compare.json` — `viewer_manifest.json` key `files.orca_audio_compare`.
+- **Humpback:** `humpback_source_segment.wav` + `humpback_audio_compare.json` — same JSON schema `orca_audio_compare_v1` (historical name); manifest key `files.source_audio_compare` so Orca paths stay unchanged.
+- WAVs are mono int16, **Source** HDF5 segment aligned to `das_preprocessing_metadata.json` `selected_interval` (`start_time_s` / `end_time_s` on the DAS axis, sliced by sample index at source `Sample Rate (Hz)`).
+- **DAS demo playback** uses `bandpass_waveform` in each shot’s signal NPZ when present (both whales exports), else median-centered wideband `signal`.
 
 ## Interactive viewer inputs
 
@@ -127,7 +129,7 @@ The static viewer (`site/`) loads, per shot:
 4. **Hydrophone support** — JSON (`hydrophone_activity.json`) or NPZ fallback (`hydrophone_event_score.npz`, optional metadata for threshold display).
 5. **Map/spatial context** — `situation.json` where available; map panel also uses `shot_metadata.json` / `recorders_summary.json` for recorder/source-style context (full bathymetry/fiber rendering may be partial; see `site/README.md`).
 6. **Selected-channel assets** — `selected_channels_index.json` + per-column NPZs, or legacy `selected_channel_*.npz` triple.
-7. **Orca demo audio** — when present, `orca_audio_compare.json` + `orca_source_segment.wav` for **inspection-only** playback in the selected-channel panel (Web Audio).
+7. **Source vs DAS demo audio** — when present, the shot’s audio-compare JSON + WAV (`files.orca_audio_compare` or `files.source_audio_compare`) for **inspection-only** playback in the selected-channel panel (Web Audio); Humpback uses the same control layout as Orca, with interpretation text reflecting weaker/noisier DAS where applicable.
 8. **Events** — `events.json` for navigation chips and interval snapping.
 9. **Environmental MVP (optional)** — when present under `output/environmental/`, the static site (`site/app.js`) loads `environmental_mvp_meta.json` and `environmental_map_fields.npz` into a **model grid inspection** dashboard (row/column index heatmaps, flow arrows, and timestep animation). The exporter is clipped by default to **2022-01-25 through 2022-01-27** (`--start-date 2022-01-25 --end-date 2022-01-28`). This is **not** a final geographic lake overlay on `situation.json` / LV95 until CRS alignment is validated; `XZ`/`YZ` stay in the export for later use. See `environmental_mvp_meta.json` and `docs/environmental_data_audit.md`.
 
@@ -156,7 +158,7 @@ with synchronized panels: DAS **context** heatmap, hydrophone **support**, spati
 - `events.json`, `hydrophone_event_score.npz`, `hydrophone_event_score_metadata.json`
 - `viewer_manifest.json`
 - `selected_channel_bundle.json`, optional `selected_channels_index.json`, `selected_channel_p*_*.npz`, legacy `selected_channel_*.npz`
-- `orca_audio_compare.json`, `orca_source_segment.wav` (Orca, after selected-channel build)
+- `orca_audio_compare.json`, `orca_source_segment.wav` (Orca); `humpback_audio_compare.json`, `humpback_source_segment.wav` (Humpback), after selected-channel build
 - `output/environmental/environmental_mvp_meta.json`, `environmental_map_fields.npz`, `environmental_fiber_timeseries.npz` (optional; requires local `.nc`; fiber series intentionally empty pending CRS)
 
 ### Final output

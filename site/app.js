@@ -373,11 +373,16 @@ function playSelchDasBandpass() {
   updateDataStatus(`Playing ${label} (demo)…`);
 }
 
+function getSourceAudioCompare() {
+  const b = state.shotBundle;
+  return b?.sourceAudioCompare || b?.orcaAudioCompare || null;
+}
+
 async function playSelchSourceReference() {
-  const oac = state.shotBundle?.orcaAudioCompare;
-  const rel = oac?.doc?.source_wav_file;
-  if (!rel || !oac.baseDir) {
-    updateDataStatus("Source reference audio not loaded (rebuild Orca bundle with WAV export).");
+  const sac = getSourceAudioCompare();
+  const rel = sac?.doc?.source_wav_playback_file || sac?.doc?.source_wav_file;
+  if (!rel || !sac.baseDir) {
+    updateDataStatus("Source reference audio not loaded (re-run build_selected_channel_bundle for this shot).");
     return;
   }
   stopSelchDemoAudio();
@@ -387,7 +392,7 @@ async function playSelchSourceReference() {
     return;
   }
   try {
-    const url = `${oac.baseDir}/${rel}`;
+    const url = `${sac.baseDir}/${rel}`;
     const res = await fetch(url);
     if (!res.ok) {
       throw new Error(`HTTP ${res.status}`);
@@ -3708,15 +3713,24 @@ function renderSelectedChannelPanel() {
     `Preview col ${sc.meta?.selected_preview_col}, raw ch ${sc.meta?.selected_raw_channel}`;
 
   if (el.selchAudioWrap) {
-    const isOrca = state.selectedShotId === "whales_orca";
-    el.selchAudioWrap.hidden = !isOrca;
-    if (isOrca && el.selchAudioHint) {
-      const hasSrc = Boolean(state.shotBundle?.orcaAudioCompare?.doc?.source_wav_file);
+    const isWhalesMvp =
+      state.selectedShotId === "whales_orca" || state.selectedShotId === "whales_humpback";
+    const showAudio = isWhalesMvp && sc?.available;
+    el.selchAudioWrap.hidden = !showAudio;
+    if (showAudio && el.selchAudioHint) {
+      const sac = getSourceAudioCompare();
+      const hasSrc = Boolean(sac?.doc?.source_wav_file);
       const hasBp = Boolean(sc.bandpassAudio?.y?.length);
       const hasWide = Boolean(sc.signal?.y?.length);
-      el.selchAudioHint.textContent = hasSrc
-        ? "Inspection only: source = dataset reference (Sound pressure @1m) at ~50 kHz; DAS = band-limited received channel (~5 kHz). Not what a whale sounded like in the lake."
-        : "Source reference WAV missing—re-run build_selected_channel_bundle for Orca. DAS audio uses exported waveform (band-pass when available).";
+      if (state.selectedShotId === "whales_humpback") {
+        el.selchAudioHint.textContent = hasSrc
+          ? "Inspection only: source = dataset reference (Sound pressure @1m) at high sample rate; DAS = band-limited received channel (~5 kHz). Humpback DAS is often weaker and noisier than Orca—compare for structure and sparsity, not ground-truth biology."
+          : "Source reference WAV missing—re-run build_selected_channel_bundle for Humpback. DAS audio uses exported waveform (band-pass when available).";
+      } else {
+        el.selchAudioHint.textContent = hasSrc
+          ? "Inspection only: source = dataset reference (Sound pressure @1m) at ~50 kHz; DAS = band-limited received channel (~5 kHz). Not what a whale sounded like in the lake."
+          : "Source reference WAV missing—re-run build_selected_channel_bundle for Orca. DAS audio uses exported waveform (band-pass when available).";
+      }
       if (el.selchPlaySourceAudio) {
         el.selchPlaySourceAudio.disabled = !hasSrc;
       }
@@ -4518,7 +4532,7 @@ async function switchSelectedChannelToPreviewCol(previewCol) {
     scheduleMapRender();
     return;
   }
-  updateDataStatus(`Loading Orca selected-channel preview col ${previewCol}…`);
+  updateDataStatus(`Loading selected-channel preview col ${previewCol}…`);
   try {
     const f = entry.files;
     const payload = await loadSelectedChannelNpzTriple(sc.baseDir, f.signal, f.spectrogram, f.bandpass_score);
@@ -4582,16 +4596,16 @@ async function loadBundleFromManifest(manifest, manifestUrl) {
   const dasActivity = await loadFile("das_activity");
   const situation = await loadFile("situation");
 
-  let orcaAudioCompare = null;
-  const oacRel = files.orca_audio_compare;
-  if (oacRel) {
+  let sourceAudioCompare = null;
+  const compareRel = files.source_audio_compare || files.orca_audio_compare;
+  if (compareRel) {
     try {
-      const doc = await fetchJson(`${baseDir}/${oacRel}`);
+      const doc = await fetchJson(`${baseDir}/${compareRel}`);
       if (doc && doc.schema_version === "orca_audio_compare_v1") {
-        orcaAudioCompare = { doc, baseDir };
+        sourceAudioCompare = { doc, baseDir };
       }
     } catch (_) {
-      orcaAudioCompare = null;
+      sourceAudioCompare = null;
     }
   }
 
@@ -4602,7 +4616,8 @@ async function loadBundleFromManifest(manifest, manifestUrl) {
     hydroActivity,
     dasActivity,
     situation,
-    orcaAudioCompare,
+    sourceAudioCompare,
+    orcaAudioCompare: sourceAudioCompare,
     missingCompatibilityFiles,
     mode: "full"
   };
