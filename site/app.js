@@ -176,6 +176,8 @@ const state = {
   dasWaterfallLoading: {},
   playing: false,
   cursorTime: 0,
+  selchCursorKey: null,
+  selchCursorTime: 0,
   hover: {
     das: null,
     hydro: null,
@@ -290,13 +292,21 @@ const el = {
   selchAudioHint: document.getElementById("selch-audio-hint"),
   selchPlayDasAudio: document.getElementById("selch-play-das-audio"),
   selchPlaySourceAudio: document.getElementById("selch-play-source-audio"),
-  selchStopAudio: document.getElementById("selch-stop-audio")
+  selchStopAudio: document.getElementById("selch-stop-audio"),
+  selchAudioScrubber: document.getElementById("selch-audio-scrubber"),
+  selchAudioScrubberTime: document.getElementById("selch-audio-scrubber-time")
 };
 
-/** Selected-channel demo audio (Orca): stop before shot/channel change. */
+/** Selected-channel demo audio: stop before shot/channel change. */
 let selchDemoAudioSource = null;
+let selchDemoAudioState = null;
 
-function stopSelchDemoAudio() {
+function stopSelchDemoAudio(options = {}) {
+  const { silent = false } = options;
+  if (selchDemoAudioState?.frame) {
+    cancelAnimationFrame(selchDemoAudioState.frame);
+  }
+  selchDemoAudioState = null;
   if (!selchDemoAudioSource) {
     return;
   }
@@ -311,6 +321,9 @@ function stopSelchDemoAudio() {
     /* ignore */
   }
   selchDemoAudioSource = null;
+  if (!silent) {
+    updateDataStatus("Selected-channel audio stopped.");
+  }
 }
 
 function getSharedAudioContext() {
@@ -328,29 +341,105 @@ function getSharedAudioContext() {
   return ctx;
 }
 
-function playSelchDasBandpass() {
+function getSelectedChannelDasAudioPayload(sc) {
+  const ba = sc?.bandpassAudio;
+  let t = ba?.t;
+  let y = ba?.y;
+  let fs = Number.isFinite(ba?.fs) ? ba.fs : sc?.signalFs;
+  let label = "band-pass DAS";
+  if (!y?.length) {
+    t = sc?.signal?.t;
+    y = sc?.signal?.y;
+    label = "median-centered DAS (wideband)";
+  }
+  if (!t?.length || !y?.length || t.length !== y.length || !Number.isFinite(fs) || fs <= 0) {
+    return null;
+  }
+  return {
+    t,
+    y,
+    fs,
+    label,
+    timeStart: Number(t[0]),
+    timeEnd: Number(t[t.length - 1]),
+    duration: y.length / fs
+  };
+}
+
+function tickSelchDasPlaybackCursor() {
+  const playback = selchDemoAudioState;
+  if (!playback?.ctx) {
+    return;
+  }
+  const elapsed = playback.ctx.currentTime - playback.ctxStartedAt;
+  const nextTime = Math.min(playback.endTime, playback.startTime + Math.max(0, elapsed));
+  state.selchCursorTime = nextTime;
+  renderSelectedChannelPanel();
+  renderHydroPanel();
+  if (nextTime >= playback.endTime - 0.005) {
+    finishSelchDasPlayback();
+    return;
+  }
+  playback.frame = requestAnimationFrame(tickSelchDasPlaybackCursor);
+}
+
+function finishSelchDasPlayback() {
+  const playback = selchDemoAudioState;
+  if (!playback) {
+    return;
+  }
+  const resetTime = Number(playback.resetTime);
+  const label = playback.label;
+  stopSelchDemoAudio({ silent: true });
+  if (Number.isFinite(resetTime)) {
+    state.selchCursorTime = resetTime;
+    renderSelectedChannelPanel();
+    renderHydroPanel();
+  }
+  updateDataStatus(`Finished ${label}; cursor reset to start.`);
+}
+
+function syncSelchAudioScrubber(sc = state.shotBundle?.selectedChannel) {
+  if (!el.selchAudioScrubber) {
+    return;
+  }
+  const range = getSelectedChannelFullTimeRange(sc);
+  const rawCursor = Number.isFinite(state.selchCursorTime) ? state.selchCursorTime : range.start;
+  const cursor = clamp(rawCursor, range.start, range.end);
+  el.selchAudioScrubber.min = range.start.toFixed(3);
+  el.selchAudioScrubber.max = range.end.toFixed(3);
+  el.selchAudioScrubber.step = "0.01";
+  el.selchAudioScrubber.value = cursor.toFixed(3);
+  if (el.selchAudioScrubberTime) {
+    el.selchAudioScrubberTime.textContent = `${cursor.toFixed(2)} s`;
+  }
+}
+
+function startSelchDasPlayback() {
   const sc = state.shotBundle?.selectedChannel;
   if (!sc?.available) {
     return;
   }
-  stopSelchDemoAudio();
+  stopSelchDemoAudio({ silent: true });
   const ctx = getSharedAudioContext();
   if (!ctx) {
     updateDataStatus("Web Audio API not available in this browser.");
     return;
   }
-  const ba = sc.bandpassAudio;
-  let y = ba?.y;
-  let fs = Number.isFinite(ba?.fs) ? ba.fs : sc.signalFs;
-  let label = "band-pass DAS";
-  if (!y?.length) {
-    y = sc.signal?.y;
-    label = "median-centered DAS (wideband)";
-  }
-  if (!y?.length || !Number.isFinite(fs) || fs <= 0) {
+  const audio = getSelectedChannelDasAudioPayload(sc);
+  if (!audio) {
     updateDataStatus("No DAS waveform available for audio.");
     return;
   }
+  const rawStartTime = Number.isFinite(state.selchCursorTime) ? state.selchCursorTime : audio.timeStart;
+  const cursorStartTime = clamp(rawStartTime, audio.timeStart, audio.timeEnd);
+  const startTime = cursorStartTime >= audio.timeEnd - 0.005 ? audio.timeStart : cursorStartTime;
+  const endTime = audio.timeEnd;
+  state.selchCursorTime = startTime;
+  renderSelectedChannelPanel();
+  renderHydroPanel();
+
+  const { y, fs, label } = audio;
   const n = y.length;
   const buf = ctx.createBuffer(1, n, fs);
   const ch = buf.getChannelData(0);
@@ -366,11 +455,27 @@ function playSelchDasBandpass() {
   src.buffer = buf;
   src.connect(ctx.destination);
   selchDemoAudioSource = src;
+  const offset = clamp(startTime - audio.timeStart, 0, Math.max(0, buf.duration - 0.001));
+  const duration = Math.max(0.01, Math.min(endTime - startTime, buf.duration - offset));
+  const playbackEnd = Math.min(endTime, startTime + duration);
+  selchDemoAudioState = {
+    ctx,
+    ctxStartedAt: ctx.currentTime,
+    startTime,
+    endTime: playbackEnd,
+    label,
+    resetTime: audio.timeStart,
+    frame: 0
+  };
   src.onended = () => {
     selchDemoAudioSource = null;
+    if (selchDemoAudioState) {
+      finishSelchDasPlayback();
+    }
   };
-  src.start(0);
-  updateDataStatus(`Playing ${label} (demo)…`);
+  src.start(0, offset, duration);
+  tickSelchDasPlaybackCursor();
+  updateDataStatus(`Playing ${label} from ${startTime.toFixed(2)} s to ${playbackEnd.toFixed(2)} s.`);
 }
 
 function getSourceAudioCompare() {
@@ -2331,8 +2436,8 @@ function renderDasWaterfallPanel() {
     colorLimit: limit
   };
   el.dasCaption.textContent =
-    `DAS Waterfall — ${shotSpeciesLabel()}: ${wf.amplitudeUnits} waterfall context, ` +
-    `${nRows} channels, preview ${viewInterval.start.toFixed(2)}-${viewInterval.end.toFixed(2)} s. Not a whale detector.`;
+    `Overview of ${nRows} DAS channels for ${shotSpeciesLabel()} from ${viewInterval.start.toFixed(2)}-${viewInterval.end.toFixed(2)} s. ` +
+    "Brighter colors mark stronger changes in the fiber signal; use this panel for context, then inspect or listen to one channel in Selected DAS Channel.";
 }
 
 function renderDasActivityPanel() {
@@ -2434,57 +2539,59 @@ function renderDasActivityPanel() {
 
 function renderHydroPanel() {
   const hydro = state.shotBundle?.hydroActivity;
-  const interval = getCurrentInterval();
-  const events = getEventList();
   const width = Math.max(640, Math.floor(el.hydroSvg.clientWidth || 1200));
   const height = Math.max(220, Math.floor(el.hydroSvg.clientHeight || 300));
   el.hydroSvg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   el.hydroSvg.setAttribute("preserveAspectRatio", "none");
 
   if (!Array.isArray(hydro?.t_s) || !Array.isArray(hydro?.score_db) || hydro.t_s.length < 2) {
-    const timeExtent = getTimeExtentFromShotBundle(state.shotBundle);
-    const visibleEvents = events.filter((event) => event.end_time_s >= timeExtent.start && event.start_time_s <= timeExtent.end);
-    const outsideEvents = events.length - visibleEvents.length;
-
-    const eventBars = visibleEvents.map((event) => {
-      const padL = 80;
-      const plotW = width - 120;
-      const plotY = 70;
-      const plotH = Math.max(90, height - 160);
-      const x = padL + ((event.start_time_s - timeExtent.start) / Math.max(0.001, timeExtent.end - timeExtent.start)) * plotW;
-      const w = ((event.end_time_s - event.start_time_s) / Math.max(0.001, timeExtent.end - timeExtent.start)) * plotW;
-      return `<rect x="${x.toFixed(1)}" y="${plotY.toFixed(1)}" width="${Math.max(2, w).toFixed(1)}" height="${plotH.toFixed(1)}" fill="rgba(255,79,216,0.28)"></rect>`;
-    }).join("");
-
+    const selectedRange = getSelectedChannelFullTimeRange(state.shotBundle?.selectedChannel);
+    const fallbackExtent = getTimeExtentFromShotBundle(state.shotBundle);
+    const timeExtent = {
+      start: Number.isFinite(selectedRange.start) ? selectedRange.start : fallbackExtent.start,
+      end: Number.isFinite(selectedRange.end) ? selectedRange.end : fallbackExtent.end
+    };
     const padL = 80;
     const plotW = width - 120;
     const plotY = 70;
     const plotH = Math.max(90, height - 160);
-    const intervalX = padL + ((interval.start - timeExtent.start) / Math.max(0.001, timeExtent.end - timeExtent.start)) * plotW;
-    const intervalW = ((interval.end - interval.start) / Math.max(0.001, timeExtent.end - timeExtent.start)) * plotW;
 
     el.hydroSvg.innerHTML = `
       <rect x="0" y="0" width="${width}" height="${height}" fill="rgba(8,15,31,0.86)"></rect>
       <rect x="${padL}" y="${plotY}" width="${plotW}" height="${plotH}" fill="rgba(8,15,31,0.55)" stroke="rgba(114,246,255,0.25)"></rect>
-      ${eventBars}
-      <rect x="${intervalX.toFixed(1)}" y="${plotY}" width="${Math.max(2, intervalW).toFixed(1)}" height="${plotH}" fill="rgba(114,246,255,0.18)"></rect>
-      <text x="92" y="52" fill="#9fb3d9" font-size="14">Hydrophone score timeseries unavailable. Showing interval + candidate-event guidance.</text>
+      <text x="92" y="52" fill="#9fb3d9" font-size="14">Hydrophone reference is unavailable.</text>
       <text x="90" y="${Math.max(0, height - 22)}" fill="#9fb3d9" font-size="13">${timeExtent.start.toFixed(2)} s</text>
       <text x="${Math.max(90, width - 90)}" y="${Math.max(0, height - 22)}" fill="#9fb3d9" font-size="13">${timeExtent.end.toFixed(2)} s</text>
-      ${outsideEvents > 0 ? `<text x="92" y="${Math.max(70, height - 42)}" fill="#ffd98b" font-size="12">${outsideEvents} event(s) are outside the visible timeline window.</text>` : ""}
     `;
 
-    el.hydroCaption.textContent = `Hydrophone support score is unavailable for this shot. Interval sync and candidate-event guidance remain active.`;
+    el.hydroCaption.textContent = "Hydrophone reference is unavailable for this shot.";
     return;
   }
 
   const t = hydro.t_s;
   const y = hydro.score_db;
   const threshold = Number(hydro?.normalization?.threshold_db);
-  const timeStart = t[0];
-  const timeEnd = t[t.length - 1];
-  const yMin = Math.min(...y) - 0.8;
-  const yMax = Math.max(...y) + 0.8;
+  const hydroStart = t[0];
+  const hydroEnd = t[t.length - 1];
+  const selectedRange = getSelectedChannelFullTimeRange(state.shotBundle?.selectedChannel);
+  const timeStart = Math.max(hydroStart, Number.isFinite(selectedRange.start) ? selectedRange.start : hydroStart);
+  const timeEnd = Math.min(hydroEnd, Number.isFinite(selectedRange.end) ? selectedRange.end : hydroEnd);
+  const i0 = clamp(lowerBoundSorted(t, timeStart), 0, t.length - 1);
+  const i1 = clamp(upperBoundSorted(t, timeEnd) - 1, i0, t.length - 1);
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  for (let i = i0; i <= i1; i += 1) {
+    const v = y[i];
+    if (!Number.isFinite(v)) continue;
+    yMin = Math.min(yMin, v);
+    yMax = Math.max(yMax, v);
+  }
+  if (!Number.isFinite(yMin) || !Number.isFinite(yMax)) {
+    yMin = Math.min(...y);
+    yMax = Math.max(...y);
+  }
+  yMin -= 0.8;
+  yMax += 0.8;
 
   const pad = { l: 72, r: 24, t: 18, b: 34 };
   const plotW = width - pad.l - pad.r;
@@ -2495,25 +2602,12 @@ function renderHydroPanel() {
 
   state.geometry.hydro = { t, y, threshold, timeStart, timeEnd, yMin, yMax, pad, plotW, plotH, xScale, yScale };
 
-  const path = t.map((time, index) => {
-    const marker = index === 0 ? "M" : "L";
-    return `${marker}${xScale(time).toFixed(2)},${yScale(y[index]).toFixed(2)}`;
-  }).join(" ");
-
-  const visibleEvents = events.filter((event) => event.end_time_s >= timeStart && event.start_time_s <= timeEnd);
-  const outsideEvents = events.length - visibleEvents.length;
-
-  const eventRects = visibleEvents
-    .map((event) => {
-      const x = xScale(event.start_time_s);
-      const w = xScale(event.end_time_s) - x;
-      return `<rect x="${x.toFixed(2)}" y="${pad.t}" width="${Math.max(2, w).toFixed(2)}" height="${plotH}" fill="rgba(255,79,216,0.12)"></rect>`;
-    })
-    .join("");
-
-  const intervalX = xScale(interval.start);
-  const intervalW = Math.max(2, xScale(interval.end) - intervalX);
-  const cursorX = xScale(clamp(state.cursorTime, timeStart, timeEnd));
+  const pathParts = [];
+  for (let i = i0; i <= i1; i += 1) {
+    const marker = i === i0 ? "M" : "L";
+    pathParts.push(`${marker}${xScale(t[i]).toFixed(2)},${yScale(y[i]).toFixed(2)}`);
+  }
+  const path = pathParts.join(" ");
 
   const thresholdLine = Number.isFinite(threshold)
     ? `<line x1="${pad.l}" y1="${yScale(threshold).toFixed(2)}" x2="${width - pad.r}" y2="${yScale(threshold).toFixed(2)}" stroke="rgba(255,107,135,0.85)" stroke-dasharray="6 5" stroke-width="1.8"></line>`
@@ -2522,20 +2616,16 @@ function renderHydroPanel() {
   el.hydroSvg.innerHTML = `
     <rect x="0" y="0" width="${width}" height="${height}" fill="rgba(8,15,31,0.88)"></rect>
     <rect x="${pad.l}" y="${pad.t}" width="${plotW}" height="${plotH}" fill="rgba(8,15,31,0.52)" stroke="rgba(114,246,255,0.2)"></rect>
-    ${eventRects}
-    <rect x="${intervalX.toFixed(2)}" y="${pad.t}" width="${intervalW.toFixed(2)}" height="${plotH}" fill="rgba(114,246,255,0.18)"></rect>
     ${thresholdLine}
     <path d="${path}" fill="none" stroke="rgba(114,246,255,0.28)" stroke-width="6"></path>
     <path d="${path}" fill="none" stroke="#72f6ff" stroke-width="2.75"></path>
-    <line x1="${cursorX.toFixed(2)}" y1="${pad.t}" x2="${cursorX.toFixed(2)}" y2="${pad.t + plotH}" stroke="rgba(255,230,109,0.95)" stroke-width="2"></line>
     <line x1="${pad.l}" y1="${pad.t + plotH}" x2="${width - pad.r}" y2="${pad.t + plotH}" stroke="rgba(159,179,217,0.7)" stroke-width="1"></line>
     <text x="${pad.l}" y="${height - 10}" fill="#9fb3d9" font-size="13">${timeStart.toFixed(2)} s</text>
     <text x="${width - pad.r - 62}" y="${height - 10}" fill="#9fb3d9" font-size="13">${timeEnd.toFixed(2)} s</text>
     <text x="16" y="${pad.t + 14}" fill="#9fb3d9" font-size="13">dB</text>
-    ${outsideEvents > 0 ? `<text x="${pad.l}" y="${Math.max(20, pad.t - 4)}" fill="#ffd98b" font-size="11">${outsideEvents} event(s) outside current hydro timeline.</text>` : ""}
   `;
 
-  el.hydroCaption.textContent = `Hydrophone support score synchronized with interval ${interval.start.toFixed(2)}-${interval.end.toFixed(2)} s; candidate-event guidance overlay enabled.`;
+  el.hydroCaption.textContent = `Reference activity from the hydrophone/source recording, shown in the same time window as the selected DAS channel (${timeStart.toFixed(2)}-${timeEnd.toFixed(2)} s). Play DAS uses the selected fiber channel, not this graph.`;
 }
 
 function buildSituationPoints(recorders, sourcePoint, xScale, yScale) {
@@ -3638,18 +3728,67 @@ function hitTestHydro(event) {
   };
 }
 
-function drawSelchEventShading(ctx, pad, plotW, plotH, interval, events) {
-  for (const event of events) {
-    if (event.end_time_s < interval.start || event.start_time_s > interval.end) {
-      continue;
+function getSelectedChannelFullTimeRange(sc) {
+  const candidates = [
+    sc?.bandpassAudio?.t,
+    sc?.signal?.t,
+    sc?.band?.t,
+    sc?.spec?.t
+  ];
+  for (const t of candidates) {
+    if (t?.length >= 2 && Number.isFinite(t[0]) && Number.isFinite(t[t.length - 1])) {
+      return { start: Number(t[0]), end: Number(t[t.length - 1]) };
     }
-    const es = Math.max(event.start_time_s, interval.start);
-    const ee = Math.min(event.end_time_s, interval.end);
-    const x0 = pad.left + ((es - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
-    const x1 = pad.left + ((ee - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
-    ctx.fillStyle = "rgba(255, 79, 216, 0.12)";
-    ctx.fillRect(x0, pad.top, Math.max(1, x1 - x0), plotH);
   }
+  return getCurrentInterval();
+}
+
+function robustRangeFromSeries(values, startIndex, endIndex, options = {}) {
+  const { qLo = 0.001, qHi = 0.999, maxSamples = 5000, includeValue = null } = options;
+  if (!values?.length || endIndex < startIndex) {
+    return { min: 0, max: 1 };
+  }
+  const n = endIndex - startIndex + 1;
+  const step = Math.max(1, Math.floor(n / maxSamples));
+  const samples = [];
+  for (let i = startIndex; i <= endIndex; i += step) {
+    const v = Number(values[i]);
+    if (Number.isFinite(v)) {
+      samples.push(v);
+    }
+  }
+  if (samples.length < 4) {
+    let min = Infinity;
+    let max = -Infinity;
+    for (let i = startIndex; i <= endIndex; i += 1) {
+      const v = Number(values[i]);
+      if (!Number.isFinite(v)) continue;
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return { min: 0, max: 1 };
+    }
+    if (Number.isFinite(includeValue)) {
+      min = Math.min(min, includeValue);
+      max = Math.max(max, includeValue);
+    }
+    const pad = (max - min) * 0.12 || 1e-6;
+    return { min: min - pad, max: max + pad };
+  }
+  samples.sort((a, b) => a - b);
+  let min = quantileFromSorted(samples, qLo);
+  let max = quantileFromSorted(samples, qHi);
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
+    min = samples[0];
+    max = samples[samples.length - 1];
+  }
+  if (Number.isFinite(includeValue)) {
+    min = Math.min(min, includeValue);
+    max = Math.max(max, includeValue);
+  }
+  const pad = (max - min) * 0.12 || 1e-6;
+  return { min: min - pad, max: max + pad };
 }
 
 function renderSelectedChannelPanel() {
@@ -3665,7 +3804,7 @@ function renderSelectedChannelPanel() {
   if (!sc || !sc.available) {
     el.selchUnavailable.hidden = false;
     el.selchContent.hidden = true;
-    el.selchUnavailable.textContent = sc?.message || "Selected-channel mode not available for this shot.";
+    el.selchUnavailable.textContent = sc?.message || "Selected DAS channel is not available for this shot.";
     state.geometry.selch = null;
     return;
   }
@@ -3704,7 +3843,21 @@ function renderSelectedChannelPanel() {
   }
 
   const interval = getCurrentInterval();
-  const events = getEventList();
+  const fullTimeRange = getSelectedChannelFullTimeRange(sc);
+  const graphTimeRange = fullTimeRange;
+  const cursorKey = [
+    state.selectedShotId || "",
+    sc.activePreviewCol ?? sc.meta?.selected_preview_col ?? sc.meta?.selected_raw_channel ?? "",
+    fullTimeRange.start.toFixed(3),
+    fullTimeRange.end.toFixed(3)
+  ].join(":");
+  if (state.selchCursorKey !== cursorKey && !selchDemoAudioState) {
+    state.selchCursorKey = cursorKey;
+    state.selchCursorTime = fullTimeRange.start;
+  }
+  const rawSelchCursor = Number.isFinite(state.selchCursorTime) ? state.selchCursorTime : fullTimeRange.start;
+  const selchCursorTime = clamp(rawSelchCursor, fullTimeRange.start, fullTimeRange.end);
+  state.selchCursorTime = selchCursorTime;
   const pad = { left: 56, right: 8, top: 4, bottom: 18 };
   let selchPlotW = 0;
 
@@ -3724,12 +3877,12 @@ function renderSelectedChannelPanel() {
       const hasWide = Boolean(sc.signal?.y?.length);
       if (state.selectedShotId === "whales_humpback") {
         el.selchAudioHint.textContent = hasSrc
-          ? "Inspection only: source = dataset reference (Sound pressure @1m) at high sample rate; DAS = band-limited received channel (~5 kHz). Humpback DAS is often weaker and noisier than Orca—compare for structure and sparsity, not ground-truth biology."
-          : "Source reference WAV missing—re-run build_selected_channel_bundle for Humpback. DAS audio uses exported waveform (band-pass when available).";
+          ? "Play DAS listens to the selected fiber channel. Play source is the original reference recording for comparison. DAS can be much noisier, especially for humpback, so use it together with the plots."
+          : "Play DAS listens to the selected fiber channel. It can sound mostly like noise, so use the plots to check where the signal changes.";
       } else {
         el.selchAudioHint.textContent = hasSrc
-          ? "Inspection only: source = dataset reference (Sound pressure @1m) at ~50 kHz; DAS = band-limited received channel (~5 kHz). Not what a whale sounded like in the lake."
-          : "Source reference WAV missing—re-run build_selected_channel_bundle for Orca. DAS audio uses exported waveform (band-pass when available).";
+          ? "Play DAS listens to the selected fiber channel. Play source is the original reference recording for comparison; the two will not sound identical."
+          : "Play DAS listens to the selected fiber channel after filtering.";
       }
       if (el.selchPlaySourceAudio) {
         el.selchPlaySourceAudio.disabled = !hasSrc;
@@ -3737,6 +3890,7 @@ function renderSelectedChannelPanel() {
       if (el.selchPlayDasAudio) {
         el.selchPlayDasAudio.disabled = !hasBp && !hasWide;
       }
+      syncSelchAudioScrubber(sc);
     }
   }
 
@@ -3766,8 +3920,8 @@ function renderSelectedChannelPanel() {
     }
     const nFreqDraw = Math.max(1, fiHi - fiLo + 1);
 
-    const i0s = lowerBoundSorted(tSpec, interval.start);
-    const i1s = upperBoundSorted(tSpec, interval.end) - 1;
+    const i0s = lowerBoundSorted(tSpec, graphTimeRange.start);
+    const i1s = upperBoundSorted(tSpec, graphTimeRange.end) - 1;
     const contrastSamples = [];
     const freqBaseline = new Float32Array(nf);
     if (i1s >= i0s) {
@@ -3834,7 +3988,7 @@ function renderSelectedChannelPanel() {
     const offCtx = off.getContext("2d");
     const img = offCtx.createImageData(rasW, rasH);
     for (let px = 0; px < rasW; px += 1) {
-      const tLin = interval.start + ((px + 0.5) / rasW) * (interval.end - interval.start);
+      const tLin = graphTimeRange.start + ((px + 0.5) / rasW) * (graphTimeRange.end - graphTimeRange.start);
       let lo = 0;
       let hi = tSpec.length - 1;
       while (lo < hi) {
@@ -3871,9 +4025,8 @@ function renderSelectedChannelPanel() {
     }
     offCtx.putImageData(img, 0, 0);
     ctx.drawImage(off, pad.left, pad.top, plotW, plotH);
-    drawSelchEventShading(ctx, pad, plotW, plotH, interval, events);
 
-    const cursorNorm = (state.cursorTime - interval.start) / Math.max(1e-9, interval.end - interval.start);
+    const cursorNorm = (selchCursorTime - graphTimeRange.start) / Math.max(1e-9, graphTimeRange.end - graphTimeRange.start);
     const cursorX = pad.left + clamp(cursorNorm, 0, 1) * plotW;
     ctx.strokeStyle = "rgba(114, 246, 255, 0.35)";
     ctx.strokeRect(pad.left, pad.top, plotW, plotH);
@@ -3886,8 +4039,8 @@ function renderSelectedChannelPanel() {
 
     ctx.fillStyle = "#9fb3d9";
     ctx.font = "11px Space Grotesk";
-    ctx.fillText(`${interval.start.toFixed(2)} s`, pad.left, height - 5);
-    ctx.fillText(`${interval.end.toFixed(2)} s`, pad.left + plotW - 54, height - 5);
+    ctx.fillText(`${graphTimeRange.start.toFixed(2)} s`, pad.left, height - 5);
+    ctx.fillText(`${graphTimeRange.end.toFixed(2)} s`, pad.left + plotW - 54, height - 5);
     ctx.save();
     ctx.translate(10, pad.top + plotH / 2);
     ctx.rotate(-Math.PI / 2);
@@ -3903,12 +4056,12 @@ function renderSelectedChannelPanel() {
     const plotW = width - pad.left - pad.right;
     const plotH = height - pad.top - pad.bottom;
     const { t: tb, score, mask, threshold } = sc.band;
-    const i0b = lowerBoundSorted(tb, interval.start);
-    const i1b = upperBoundSorted(tb, interval.end) - 1;
+    const i0b = lowerBoundSorted(tb, graphTimeRange.start);
+    const i1b = upperBoundSorted(tb, graphTimeRange.end) - 1;
 
     if (mask && mask.length === score.length) {
       for (let px = 0; px < plotW; px += 1) {
-        const tLin = interval.start + ((px + 0.5) / plotW) * (interval.end - interval.start);
+        const tLin = graphTimeRange.start + ((px + 0.5) / plotW) * (graphTimeRange.end - graphTimeRange.start);
         let lo = 0;
         let hi = tb.length - 1;
         while (lo < hi) {
@@ -3931,28 +4084,13 @@ function renderSelectedChannelPanel() {
       }
     }
 
-    drawSelchEventShading(ctx, pad, plotW, plotH, interval, events);
-
-    let ymin = Infinity;
-    let ymax = -Infinity;
-    if (i1b >= i0b) {
-      for (let i = i0b; i <= i1b; i += 1) {
-        const v = score[i];
-        if (v < ymin) ymin = v;
-        if (v > ymax) ymax = v;
-      }
-    }
-    if (!Number.isFinite(ymin)) {
-      ymin = 0;
-      ymax = 1;
-    }
-    if (Number.isFinite(threshold)) {
-      ymin = Math.min(ymin, threshold);
-      ymax = Math.max(ymax, threshold);
-    }
-    const yPad = (ymax - ymin) * 0.12 || 1e-6;
-    ymin -= yPad;
-    ymax += yPad;
+    const bandRange = robustRangeFromSeries(score, i0b, i1b, {
+      qLo: 0.01,
+      qHi: 0.995,
+      includeValue: threshold
+    });
+    const ymin = bandRange.min;
+    const ymax = bandRange.max;
 
     ctx.strokeStyle = "rgba(114, 246, 255, 0.35)";
     ctx.strokeRect(pad.left, pad.top, plotW, plotH);
@@ -3961,9 +4099,11 @@ function renderSelectedChannelPanel() {
     ctx.strokeStyle = "rgba(156, 255, 87, 0.9)";
     ctx.lineWidth = 1.4;
     let started = false;
-    for (let i = i0b; i <= i1b; i += 1) {
+    const nBand = Math.max(0, i1b - i0b + 1);
+    const bandStep = Math.max(1, Math.floor(nBand / Math.ceil(plotW * 4)));
+    for (let i = i0b; i <= i1b; i += bandStep) {
       const t = tb[i];
-      const x = pad.left + ((t - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
+      const x = pad.left + ((t - graphTimeRange.start) / Math.max(1e-9, graphTimeRange.end - graphTimeRange.start)) * plotW;
       const y = pad.top + (1 - (score[i] - ymin) / Math.max(1e-9, ymax - ymin)) * plotH;
       if (!started) {
         ctx.moveTo(x, y);
@@ -3986,7 +4126,7 @@ function renderSelectedChannelPanel() {
       ctx.setLineDash([]);
     }
 
-    const cursorNormB = (state.cursorTime - interval.start) / Math.max(1e-9, interval.end - interval.start);
+    const cursorNormB = (selchCursorTime - graphTimeRange.start) / Math.max(1e-9, graphTimeRange.end - graphTimeRange.start);
     const cursorXB = pad.left + clamp(cursorNormB, 0, 1) * plotW;
     ctx.strokeStyle = "rgba(255, 230, 109, 0.95)";
     ctx.lineWidth = 2;
@@ -4005,26 +4145,17 @@ function renderSelectedChannelPanel() {
     const plotW = width - pad.left - pad.right;
     const plotH = height - pad.top - pad.bottom;
     const { t: tw, y: yw } = sc.signal;
-    const i0w = lowerBoundSorted(tw, interval.start);
-    const i1w = upperBoundSorted(tw, interval.end) - 1;
-
-    drawSelchEventShading(ctx, pad, plotW, plotH, interval, events);
+    const i0w = lowerBoundSorted(tw, graphTimeRange.start);
+    const i1w = upperBoundSorted(tw, graphTimeRange.end) - 1;
 
     if (i1w < i0w) {
       ctx.fillStyle = "#9fb3d9";
       ctx.font = "12px Space Grotesk";
       ctx.fillText("No waveform samples in interval.", pad.left, pad.top + 24);
     } else {
-      let ymin = Infinity;
-      let ymax = -Infinity;
-      for (let i = i0w; i <= i1w; i += 1) {
-        const v = yw[i];
-        if (v < ymin) ymin = v;
-        if (v > ymax) ymax = v;
-      }
-      const yPadW = (ymax - ymin) * 0.08 || 1e-6;
-      ymin -= yPadW;
-      ymax += yPadW;
+      const waveRange = robustRangeFromSeries(yw, i0w, i1w, { qLo: 0.001, qHi: 0.999 });
+      const ymin = waveRange.min;
+      const ymax = waveRange.max;
       ctx.strokeStyle = "rgba(114, 246, 255, 0.35)";
       ctx.strokeRect(pad.left, pad.top, plotW, plotH);
       const n = i1w - i0w + 1;
@@ -4036,7 +4167,7 @@ function renderSelectedChannelPanel() {
       let startedW = false;
       for (let i = i0w; i <= i1w; i += step) {
         const t = tw[i];
-        const x = pad.left + ((t - interval.start) / Math.max(1e-9, interval.end - interval.start)) * plotW;
+        const x = pad.left + ((t - graphTimeRange.start) / Math.max(1e-9, graphTimeRange.end - graphTimeRange.start)) * plotW;
         const y = pad.top + (1 - (yw[i] - ymin) / Math.max(1e-9, ymax - ymin)) * plotH;
         if (!startedW) {
           ctx.moveTo(x, y);
@@ -4048,7 +4179,7 @@ function renderSelectedChannelPanel() {
       ctx.stroke();
     }
 
-    const cursorNormW = (state.cursorTime - interval.start) / Math.max(1e-9, interval.end - interval.start);
+    const cursorNormW = (selchCursorTime - graphTimeRange.start) / Math.max(1e-9, graphTimeRange.end - graphTimeRange.start);
     const cursorXW = pad.left + clamp(cursorNormW, 0, 1) * plotW;
     ctx.strokeStyle = "rgba(255, 230, 109, 0.95)";
     ctx.lineWidth = 2;
@@ -4066,10 +4197,12 @@ function renderSelectedChannelPanel() {
   const distStr = Number.isFinite(dist) ? ` · ~${dist.toFixed(1)} m along cable` : "";
   const bh = sc.band.bandHz;
   const bandStr = bh ? `${bh[0].toFixed(0)}–${bh[1].toFixed(0)} Hz band` : "Band-pass support";
-  el.selchCaption.textContent = `${bandStr}. Interval ${interval.start.toFixed(2)}–${interval.end.toFixed(2)} s, cursor ${state.cursorTime.toFixed(2)} s${distStr}.`;
+  el.selchCaption.textContent = `${bandStr}. Full channel axis ${fullTimeRange.start.toFixed(2)}–${fullTimeRange.end.toFixed(2)} s, cursor ${selchCursorTime.toFixed(2)} s${distStr}.`;
 
   state.geometry.selch = {
     interval,
+    timeStart: graphTimeRange.start,
+    timeEnd: graphTimeRange.end,
     pad,
     plotW: selchPlotW
   };
@@ -4081,8 +4214,8 @@ function renderAllPanels() {
   updatePlaybackLabel();
   renderActiveEventLabel();
   renderDasPanel();
-  renderHydroPanel();
   renderSelectedChannelPanel();
+  renderHydroPanel();
   renderEventNavigation();
   updateMapShotSummary();
   updateMapSnapshotPanel();
@@ -4129,23 +4262,29 @@ function seekCursorToTime(targetTime, sourceLabel, options = {}) {
   }
 }
 
+function seekSelchCursorToTime(targetTime, sourceLabel, options = {}) {
+  if (!Number.isFinite(targetTime)) {
+    return;
+  }
+  const { announce = true } = options;
+  const geo = state.geometry.selch;
+  const fallbackRange = getSelectedChannelFullTimeRange(state.shotBundle?.selectedChannel);
+  const timeStart = Number.isFinite(geo?.timeStart) ? geo.timeStart : fallbackRange.start;
+  const timeEnd = Number.isFinite(geo?.timeEnd) ? geo.timeEnd : fallbackRange.end;
+  state.selchCursorTime = clamp(targetTime, timeStart, timeEnd);
+  renderSelectedChannelPanel();
+  renderHydroPanel();
+  if (announce) {
+    updateDataStatus(`Selected DAS channel cursor moved to ${state.selchCursorTime.toFixed(2)} s via ${sourceLabel}.`);
+  }
+}
+
 function seekFromDasPointer(event) {
   const hit = hitTestDas(event);
   if (!hit) {
     return;
   }
   seekCursorToTime(hit.time, "DAS view", {
-    announce: false,
-    deferred: true
-  });
-}
-
-function seekFromHydroPointer(event) {
-  const hit = hitTestHydro(event);
-  if (!hit) {
-    return;
-  }
-  seekCursorToTime(hit.time, "hydrophone view", {
     announce: false,
     deferred: true
   });
@@ -4160,9 +4299,11 @@ function hitTestSelchTime(event) {
   if (x < geo.pad.left || x > geo.pad.left + geo.plotW) {
     return null;
   }
+  const timeStart = Number.isFinite(geo.timeStart) ? geo.timeStart : geo.interval.start;
+  const timeEnd = Number.isFinite(geo.timeEnd) ? geo.timeEnd : geo.interval.end;
   const t =
-    geo.interval.start +
-    ((x - geo.pad.left) / Math.max(1e-9, geo.plotW)) * (geo.interval.end - geo.interval.start);
+    timeStart +
+    ((x - geo.pad.left) / Math.max(1e-9, geo.plotW)) * (timeEnd - timeStart);
   return {
     time: t,
     clientX: event.clientX,
@@ -4175,10 +4316,7 @@ function seekFromSelchPointer(event) {
   if (!hit) {
     return;
   }
-  seekCursorToTime(hit.time, "selected-channel view", {
-    announce: false,
-    deferred: true
-  });
+  seekSelchCursorToTime(hit.time, "selected-channel view", { announce: false });
 }
 
 function bindSelchCanvas(canvas) {
@@ -4191,10 +4329,7 @@ function bindSelchCanvas(canvas) {
     if (!hit) {
       return;
     }
-    seekCursorToTime(hit.time, "selected-channel view", {
-      announce: true,
-      deferred: false
-    });
+    seekSelchCursorToTime(hit.time, "selected-channel view", { announce: true });
   });
   canvas.addEventListener(
     "mousemove",
@@ -4398,7 +4533,7 @@ async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
   if (manifest?.selected_channel_mode_available === false) {
     return {
       available: false,
-      message: "Selected-channel mode not available for this shot (manifest flag)."
+      message: "Selected DAS channel is not available for this shot (manifest flag)."
     };
   }
 
@@ -4462,7 +4597,7 @@ async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
     if (!meta) {
       return {
         available: false,
-        message: "Selected-channel mode not available for this shot (bundle/index files not found)."
+        message: "Selected DAS channel is not available for this shot (bundle/index files not found)."
       };
     }
   } catch (error) {
@@ -4688,8 +4823,8 @@ function updateHoverTooltipFromHydro(event) {
     }
 
     showTooltip(
-      "Hydrophone support score",
-      `Time ${hit.time.toFixed(2)} s<br>Support score ${hit.score.toFixed(2)} dB<br>${Number.isFinite(hit.threshold) ? (hit.score >= hit.threshold ? "Above threshold" : "Below threshold") : "Baseline support"}<br>Interval ${getCurrentInterval().start.toFixed(2)}-${getCurrentInterval().end.toFixed(2)} s`,
+      "Hydrophone reference activity",
+      `Time ${hit.time.toFixed(2)} s<br>Reference score ${hit.score.toFixed(2)} dB<br>${Number.isFinite(hit.threshold) ? (hit.score >= hit.threshold ? "Above threshold" : "Below threshold") : "Baseline reference"}<br>Shown with selected DAS timeline`,
       hit.clientX,
       hit.clientY
     );
@@ -4766,7 +4901,7 @@ async function onShotChanged() {
       state.shotBundle = fallbackBundle;
       state.shotBundle.selectedChannel = {
         available: false,
-        message: "Selected-channel mode not available for this shot."
+        message: "Selected DAS channel is not available for this shot."
       };
       resetMapViewport();
       resetMapTimelineForShot();
@@ -4850,25 +4985,6 @@ function bindEvents() {
   }, { passive: true });
 
   el.hydroSvg.addEventListener("mousemove", updateHoverTooltipFromHydro, { passive: true });
-  el.hydroSvg.addEventListener("mousedown", (event) => {
-    state.draggingTarget = "hydro";
-    seekFromHydroPointer(event);
-  });
-  el.hydroSvg.addEventListener("click", (event) => {
-    const hit = hitTestHydro(event);
-    if (!hit) {
-      return;
-    }
-    seekCursorToTime(hit.time, "hydrophone view", {
-      announce: true,
-      deferred: false
-    });
-  });
-  el.hydroSvg.addEventListener("mousemove", (event) => {
-    if (state.draggingTarget === "hydro") {
-      seekFromHydroPointer(event);
-    }
-  }, { passive: true });
   el.hydroSvg.addEventListener("mouseleave", () => {
     hideTooltip();
   }, { passive: true });
@@ -4889,7 +5005,7 @@ function bindEvents() {
 
   if (el.selchPlayDasAudio) {
     el.selchPlayDasAudio.addEventListener("click", () => {
-      playSelchDasBandpass();
+      startSelchDasPlayback();
     });
   }
   if (el.selchPlaySourceAudio) {
@@ -4900,6 +5016,17 @@ function bindEvents() {
   if (el.selchStopAudio) {
     el.selchStopAudio.addEventListener("click", () => {
       stopSelchDemoAudio();
+    });
+  }
+  if (el.selchAudioScrubber) {
+    el.selchAudioScrubber.addEventListener("input", () => {
+      const t = Number(el.selchAudioScrubber.value);
+      if (!Number.isFinite(t)) {
+        return;
+      }
+      state.selchCursorTime = t;
+      renderSelectedChannelPanel();
+      renderHydroPanel();
     });
   }
 

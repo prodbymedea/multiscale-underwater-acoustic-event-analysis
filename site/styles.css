@@ -1103,6 +1103,27 @@ button:disabled {
   align-items: center;
 }
 
+.selch-audio-scrubber {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  margin-top: 0.6rem;
+}
+
+#selch-audio-scrubber {
+  width: 100%;
+  accent-color: #72f6ff;
+}
+
+#selch-audio-scrubber-time {
+  min-width: 4.8rem;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
 .selch-audio-btn {
   font-family: inherit;
   font-size: 0.82rem;

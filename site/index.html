@@ -73,8 +73,8 @@
 
       <section class="layout-grid" aria-label="Main visualization layout">
         <article class="panel panel-selected-channel" aria-labelledby="selch-heading">
-          <h2 id="selch-heading">Selected-channel DAS</h2>
-          <p id="selch-unavailable" class="selch-unavailable" hidden>Selected-channel mode not available for this shot.</p>
+          <h2 id="selch-heading">Selected DAS Channel</h2>
+          <p id="selch-unavailable" class="selch-unavailable" hidden>Selected DAS channel is not available for this shot.</p>
           <div id="selch-content" class="selch-content">
             <div id="selch-channel-wrap" class="selch-channel-wrap" hidden>
               <label for="selch-channel-select" class="selch-channel-label">Preview column</label>
@@ -104,8 +104,12 @@
                 <button type="button" id="selch-play-source-audio" class="selch-audio-btn">Play source (reference)</button>
                 <button type="button" id="selch-stop-audio" class="selch-audio-btn selch-audio-btn-muted">Stop</button>
               </div>
+              <div class="selch-audio-scrubber">
+                <input id="selch-audio-scrubber" type="range" min="0" max="1" value="0" step="0.01" aria-label="DAS playback cursor" />
+                <output id="selch-audio-scrubber-time">0.00 s</output>
+              </div>
             </div>
-            <p id="selch-caption" class="panel-caption">Waiting for selected-channel bundle...</p>
+            <p id="selch-caption" class="panel-caption">Waiting for selected DAS channel...</p>
           </div>
         </article>
 
@@ -198,10 +202,10 @@
         </article>
 
         <article class="panel panel-hydro" aria-labelledby="hydro-heading">
-          <h2 id="hydro-heading">Hydrophone Support</h2>
+          <h2 id="hydro-heading">Hydrophone Reference</h2>
           <div id="hydrophone-view" class="panel-placeholder">
-            <svg id="hydro-svg" viewBox="0 0 1200 300" preserveAspectRatio="none" aria-label="Hydrophone support score"></svg>
-            <p id="hydro-caption" class="panel-caption">Waiting for hydrophone support score...</p>
+            <svg id="hydro-svg" viewBox="0 0 1200 300" preserveAspectRatio="none" aria-label="Hydrophone reference activity"></svg>
+            <p id="hydro-caption" class="panel-caption">Waiting for hydrophone reference...</p>
           </div>
         </article>
 
