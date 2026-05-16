@@ -40,9 +40,9 @@ The implemented and planned MVP behavior is aligned with:
 
 ## Technical structure of the MVP output
 
-The viewer synchronizes interval, cursor, and (where available) event navigation across:
+The viewer synchronizes shot context, selected DAS channel, and (where available) event/navigation context across:
 
-- DAS **context** panel (activity heatmap / fallback),
+- DAS **context** panel (raw waterfall / fallback),
 - hydrophone **support** panel,
 - map/spatial panel,
 - selected-channel panel (single or multi-preview-column via `selected_channels_index.json`).

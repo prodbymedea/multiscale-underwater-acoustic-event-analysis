@@ -277,7 +277,7 @@ def build_manifest(shot: str) -> dict[str, Any]:
         "notes": [
             "Hydrophone event score is a support timing layer, not whale probability.",
             "DAS activity map is a processed aggregated activity context layer.",
-            "DAS waterfall view uses das_waterfall_preview.npz when available (teacher-style raw/native full-channel context), otherwise das_preprocessed_preview.npz; it is not a whale detector.",
+            "DAS waterfall view uses das_waterfall_preview.npz when available (raw/native full-channel context), otherwise das_preprocessed_preview.npz; it is not a whale detector.",
             "Manifest references large artifacts by path and avoids duplicating large arrays.",
         ],
     }

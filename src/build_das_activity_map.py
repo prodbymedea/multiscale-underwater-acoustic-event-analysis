@@ -80,6 +80,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument("--out-dir", type=Path, default=None, help="Output directory for NPZ/JSON")
     ap.add_argument("--fig-dir", type=Path, default=None, help="Figure output directory")
+    ap.add_argument("--no-figures", action="store_true", help="Do not write diagnostic PNG figures.")
     return ap.parse_args()
 
 
@@ -260,7 +261,8 @@ def main() -> None:
     out_dir = args.out_dir or (REPO_ROOT / "output" / "shots" / shot)
     fig_dir = args.fig_dir or (REPO_ROOT / "figures" / "shots" / shot)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fig_dir.mkdir(parents=True, exist_ok=True)
+    if not args.no_figures:
+        fig_dir.mkdir(parents=True, exist_ok=True)
 
     input_npz = args.input_npz or (out_dir / "das_preprocessed_preview.npz")
     input_meta = args.input_meta or (out_dir / "das_preprocessing_metadata.json")
@@ -363,10 +365,13 @@ def main() -> None:
     with open(out_meta_path, "w", encoding="utf-8") as f:
         json.dump(out_meta, f, indent=2, ensure_ascii=False)
 
-    fig_activity = fig_dir / "das_activity_map.png"
-    fig_compare = fig_dir / "das_rms_vs_activity.png"
-    _plot_activity_map(activity_map, t_windows_s, distances_m, shot=shot, out_path=fig_activity)
-    _plot_rms_vs_activity(rms_map, activity_map, t_windows_s, distances_m, shot=shot, out_path=fig_compare)
+    fig_activity = None
+    fig_compare = None
+    if not args.no_figures:
+        fig_activity = fig_dir / "das_activity_map.png"
+        fig_compare = fig_dir / "das_rms_vs_activity.png"
+        _plot_activity_map(activity_map, t_windows_s, distances_m, shot=shot, out_path=fig_activity)
+        _plot_rms_vs_activity(rms_map, activity_map, t_windows_s, distances_m, shot=shot, out_path=fig_compare)
 
     print(f"Shot: {shot}")
     print(f"Input npz keys: {list(z.keys())}")
@@ -378,8 +383,11 @@ def main() -> None:
     print(f"Normalization: {norm_meta}")
     print(f"Saved: {out_npz}")
     print(f"Saved: {out_meta_path}")
-    print(f"Saved: {fig_activity}")
-    print(f"Saved: {fig_compare}")
+    if fig_activity and fig_compare:
+        print(f"Saved: {fig_activity}")
+        print(f"Saved: {fig_compare}")
+    else:
+        print("Skipped diagnostic figures (--no-figures)")
 
 
 if __name__ == "__main__":

@@ -72,27 +72,43 @@ inspection (e.g. `assetDiagnostics.summary()` in the console).
 
 - `index.html`: existing layout with synchronized render containers.
 - `styles.css`: dark scientific UI theme and panel/component styling.
-- `app.js`: synchronized interval handling, panel rendering, playback, and event navigation.
+- `app.js`: thin bootstrap that loads the viewer script layers.
+- `js/app/viewer-core.js`: shared state, resolver, status, tooltip, and render scheduling.
+- `js/app/viewer-loading.js`: JSON/NPZ parsing and frontend bundle adapters.
+- `js/app/shared/`: math and canvas helpers used by multiple graphs.
+- `js/app/data/`: shot list / manifest option loading.
+- `js/app/state/`: selected shot, event, source, cursor, event navigation, and playback state helpers.
+- `js/app/graphs/graph-das.js`: DAS waterfall rendering and lazy waterfall loading.
+- `js/app/graphs/graph-hydro.js`: hydrophone reference chart.
+- `js/app/graphs/graph-map.js`: spatial context / channel map.
+- `js/app/graphs/map-interactions.js`: map hover, pan, zoom, layer controls, and channel selection.
+- `js/app/graphs/map-summary.js`: map-side selected-channel and snapshot panels.
+- `js/app/graphs/map-timeline.js`: map timeline controls and playback.
+- `js/app/graphs/graph-hit-tests.js`: hover/click hit testing for DAS and hydrophone graphs.
+- `js/app/graphs/graph-selected-channel.js`: selected-channel spectrogram, support score, and waveform.
+- `js/app/graphs/selected-channel-audio.js`: selected-channel and source reference audio playback.
+- `js/app/viewer-interactions.js`: shot loading, controls, playback, and event wiring.
 - `vendor/fflate.min.js`: tiny unzip helper for NumPy `.npz` (ZIP) loads in the browser.
 
-## Implemented synchronized views
+## Implemented views
 
-The same selected interval (`start` / `end`) now drives all three panels:
+The viewer loads one selected shot at a time and keeps the map, DAS waterfall,
+hydrophone reference, and selected-channel panels in sync through the current
+shot and selected DAS channel.
 
 - DAS context panel:
-	- renders `viewer/das_activity.json` heatmap when available,
-	- provides an **Activity / Waterfall** toggle,
-	- **Activity** is the processed aggregated DAS activity map (`das_activity_map.npz` fallback),
-	- **Waterfall** uses `das_waterfall_preview.npz` when available: teacher-style native raw DAS counts, first 30k raw samples by default, all channels, sample index on x, channel index on y, and diverging amplitude color; it falls back to `das_preprocessed_preview.npz` only when the raw waterfall artifact is missing,
-	- shows shared interval and shared playback cursor,
-	- falls back to metadata mode when DAS export is unavailable.
+	- renders **DAS Waterfall** from `das_waterfall_preview.npz` when available: native raw DAS counts, first 30k raw samples by default, all channels, sample index on x, channel index on y, and diverging amplitude color,
+	- falls back to `das_preprocessed_preview.npz` only when the raw waterfall artifact is missing,
+	- highlights the currently selected DAS channel when that raw channel is present in the waterfall,
+	- supports hover inspection for sample/channel/value but does not expose a draggable time cursor,
+	- falls back to a readable status message when DAS export is unavailable.
 - Hydrophone support view:
 	- renders score timeline from `hydrophone_activity.json` when available,
-	- overlays selected interval and candidate event spans,
-	- falls back to interval + event guidance mode when timeline is unavailable.
+	- overlays candidate event spans,
+	- falls back to event guidance mode when timeline is unavailable.
 - Map/spatial context view:
 	- renders source/recorder positions from `shot_metadata.json`, `recorders_summary.json`, and manifest source ground truth,
-	- displays synchronized interval context,
+	- renders bathymetry, fiber, boat tracks, recorder/source points, selected-channel marker, and an optional map timeline when situation data are available,
 	- falls back to metadata-only mode when spatial coordinates are unavailable.
 - Selected-channel DAS panel:
 	- loads `selected_channels_index.json` when present (multiple preview columns), otherwise the legacy single triple `selected_channel_*.npz`,
@@ -106,33 +122,17 @@ The same selected interval (`start` / `end`) now drives all three panels:
 ## Synchronization behavior
 
 - Shot selector updates all panels and metadata.
-- Interval input supports explicit apply/reset controls and clamps to valid shot bounds.
-- Playback controls are intentionally de-emphasized in Step 6; the viewer keeps a static shared cursor and defers full playback behavior to later steps.
-- Candidate events are shown as navigation chips in the sidebar.
-- Clicking an event chip snaps interval and cursor to that event.
-
-## Step 7 interval interaction workflow
-
-- Interval selection:
-	- set start/end seconds in controls,
-	- click "Apply interval" (or press Enter in either input),
-	- values are clamped to available time range and synchronized across DAS/hydro/map/sidebar.
-- Candidate event navigation:
-	- event chips are clickable,
-	- clicking a chip updates interval around the event and moves shared cursor to event center,
-	- active event (at cursor time) is shown in the sidebar.
-- Synchronized cursor movement:
-	- click inside DAS heatmap to move shared cursor,
-	- click inside hydrophone view to move shared cursor,
-	- click or drag inside selected-channel canvases to move the shared cursor,
-	- lightweight drag-to-seek is supported in DAS and hydro views.
+- Selected-channel dropdown and map fiber clicks update the selected-channel panel and the selected-channel marker on the map.
+- Selected-channel canvases have their own inspection/playback cursor for waveform, band score, spectrogram, and demo audio.
+- DAS Waterfall hover is read-only and does not drive a global cursor.
+- Map timeline controls affect only the spatial context timeline.
 - Map-assisted selected-channel switching:
 	- for multi-channel selected-channel shots, click near the fiber on the map to snap to the nearest available exported selected channel,
 	- this reuses the same selected-channel state as the dropdown selector and updates the dropdown value.
 - Interactive feedback:
-	- current interval and cursor time are always visible,
-	- active event updates as cursor moves,
-	- all panels re-render immediately when interval/cursor changes.
+	- selected channel facts are visible in the map summary panel,
+	- selected-channel cursor time is visible in the selected-channel caption/audio scrubber,
+	- affected panels re-render immediately when shot, selected channel, or selected-channel cursor changes.
 
 ## Data loading behavior
 
@@ -161,7 +161,7 @@ Fallback mode keeps synchronized interval/events but uses metadata-driven placeh
 - Selected-channel `.npz` parsing supports the dtypes used in current exports (`float32` time series, `uint8` mask, etc.); exotic dtypes may require extending `parseNpyArrayBuffer`.
 - DAS activity and hydro **main** panels can use JSON compatibility exports when present, with NPZ fallback (`das_activity_map.npz`, `hydrophone_event_score.npz`) when JSON is absent.
 - DAS Waterfall mode is an interpretable cable-wide context view, not whale detection. It uses symmetric robust clipping (2nd/98th percentile by visible interval) so broad channel structure and red/blue amplitude deviations remain visible without letting outliers dominate.
-- Map panel currently renders lightweight source/recorder context, not full bathymetry/fiber-track geometry rendering.
+- Map panel renders available situation layers, but model/geographic alignment remains limited by the exported spatial metadata.
 
 ## Local testing
 
@@ -179,7 +179,7 @@ Avoid `file://` opening because browser fetch restrictions can block local JSON 
 
 ## Scope notes
 
-- Frontend-only update for Sprint 2 Step 6.
-- Backend scripts and output generation are unchanged.
+- Static frontend viewer for the current MVP bundle.
+- The canonical build script can skip diagnostic PNG generation for final viewer builds.
 - No ML, no whale classification logic.
 - Whales subset focus (`whales_humpback`, `whales_orca`).

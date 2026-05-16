@@ -269,6 +269,7 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=None, help="events.json path (default: shot-dir/events.json)")
     ap.add_argument("--score-p-low", type=float, default=5.0, help="Lower percentile for score normalization")
     ap.add_argument("--score-p-high", type=float, default=99.0, help="Upper percentile for score normalization")
+    ap.add_argument("--no-figures", action="store_true", help="Do not write diagnostic PNG figures.")
     args = ap.parse_args()
 
     shot_dir: Path = args.shot_dir
@@ -454,29 +455,34 @@ def main() -> None:
     with open(guidance_path, "w", encoding="utf-8") as f:
         json.dump(guidance, f, indent=2, ensure_ascii=False)
 
-    # Diagnostic figures
-    fig_dir = REPO_ROOT / "figures" / "shots" / shot_id
-    fig_dir.mkdir(parents=True, exist_ok=True)
-    fig1 = fig_dir / "hydrophone_event_score.png"
-    fig2 = fig_dir / "score_with_events.png"
-    _plot_hydro_score(
-        t=t,
-        raw_score=scores,
-        norm_score=score_norm,
-        threshold=threshold,
-        events=out_events,
-        shot_id=shot_id,
-        out_png_1=fig1,
-        out_png_2=fig2,
-    )
+    fig1 = None
+    fig2 = None
+    if not args.no_figures:
+        fig_dir = REPO_ROOT / "figures" / "shots" / shot_id
+        fig_dir.mkdir(parents=True, exist_ok=True)
+        fig1 = fig_dir / "hydrophone_event_score.png"
+        fig2 = fig_dir / "score_with_events.png"
+        _plot_hydro_score(
+            t=t,
+            raw_score=scores,
+            norm_score=score_norm,
+            threshold=threshold,
+            events=out_events,
+            shot_id=shot_id,
+            out_png_1=fig1,
+            out_png_2=fig2,
+        )
 
     print(f"Threshold (dB): {threshold:.3f}")
     print(f"Wrote {len(out_events)} events → {out_path}")
     print(f"Wrote score npz → {score_npz_path}")
     print(f"Wrote score metadata → {score_meta_path}")
     print(f"Wrote viewer guidance → {guidance_path}")
-    print(f"Wrote figure → {fig1}")
-    print(f"Wrote figure → {fig2}")
+    if fig1 and fig2:
+        print(f"Wrote figure → {fig1}")
+        print(f"Wrote figure → {fig2}")
+    else:
+        print("Skipped diagnostic figures (--no-figures)")
 
 
 if __name__ == "__main__":

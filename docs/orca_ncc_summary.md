@@ -2,13 +2,13 @@
 
 _Regenerate:_ `python3 src/summarize_orca_ncc_band.py` (see `--help`; optional env `ORCA_NCC_NPY` or default `data/raw/corr_band_Orca_2000_2490Hz.npy`).
 
-- **Input:** `/Users/alimur/Downloads/das_teacher_test/corr_band_Orca_2000_2490Hz.npy`
+- **Input:** local `corr_band_Orca_2000_2490Hz.npy`
 - **Array shape:** `[496162, 946]` (channel axis=1)
 - **Generated UTC:** 2026-05-06T19:37:06.799536+00:00
 
 ## Finding (thesis-safe wording)
 
-Per-channel **max |NCC|** in this teacher-processed band is **concentrated** on a **small**
+Per-channel **max |NCC|** in this externally processed band is **concentrated** on a **small**
 subset of raw channel indices. This **supports** interpreting Orca-related DAS response as
 **sparse** and **channel-localized**, not uniformly distributed along the full cable. It **does not**
 by itself prove species identity or a unique physical source mechanism.

@@ -236,6 +236,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--clip-abs", type=float, default=8.0)
     ap.add_argument("--out-dir", type=Path, default=None)
     ap.add_argument("--fig-dir", type=Path, default=None)
+    ap.add_argument("--no-figures", action="store_true", help="Do not write diagnostic PNG figures.")
     return ap.parse_args()
 
 
@@ -249,7 +250,8 @@ def main() -> None:
     out_dir = args.out_dir or (REPO_ROOT / "output" / "shots" / shot_slug)
     fig_dir = args.fig_dir or (REPO_ROOT / "figures" / "shots" / shot_slug)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fig_dir.mkdir(parents=True, exist_ok=True)
+    if not args.no_figures:
+        fig_dir.mkdir(parents=True, exist_ok=True)
 
     fmin = args.fmin if args.fmin > 0 else None
     fmax = args.fmax if args.fmax > 0 else None
@@ -349,8 +351,8 @@ def main() -> None:
         },
         "outputs": {
             "npz_path": str(npz_path.resolve()),
-            "comparison_figure": str((fig_dir / "das_raw_vs_preprocessed.png").resolve()),
-            "preprocessed_figure": str((fig_dir / "das_preprocessed_preview.png").resolve()),
+            "comparison_figure": None if args.no_figures else str((fig_dir / "das_raw_vs_preprocessed.png").resolve()),
+            "preprocessed_figure": None if args.no_figures else str((fig_dir / "das_preprocessed_preview.png").resolve()),
         },
     }
 
@@ -358,21 +360,22 @@ def main() -> None:
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
-    _plot_preprocessed_only(
-        pre_preview,
-        t_s=t_s,
-        dist_m=distances_m,
-        out_path=fig_dir / "das_preprocessed_preview.png",
-        shot_slug=shot_slug,
-    )
-    _plot_raw_vs_pre(
-        raw_preview,
-        pre_preview,
-        t_s=t_s,
-        dist_m=distances_m,
-        out_path=fig_dir / "das_raw_vs_preprocessed.png",
-        shot_slug=shot_slug,
-    )
+    if not args.no_figures:
+        _plot_preprocessed_only(
+            pre_preview,
+            t_s=t_s,
+            dist_m=distances_m,
+            out_path=fig_dir / "das_preprocessed_preview.png",
+            shot_slug=shot_slug,
+        )
+        _plot_raw_vs_pre(
+            raw_preview,
+            pre_preview,
+            t_s=t_s,
+            dist_m=distances_m,
+            out_path=fig_dir / "das_raw_vs_preprocessed.png",
+            shot_slug=shot_slug,
+        )
 
     print(f"Shot: {shot_slug}")
     print(f"Loaded: {shot_path}")
@@ -381,8 +384,11 @@ def main() -> None:
     print(f"Filter: {filter_kind}, fmin={fmin}, fmax={fmax}, order={args.filter_order}")
     print(f"Saved: {npz_path}")
     print(f"Saved: {meta_path}")
-    print(f"Saved: {fig_dir / 'das_preprocessed_preview.png'}")
-    print(f"Saved: {fig_dir / 'das_raw_vs_preprocessed.png'}")
+    if args.no_figures:
+        print("Skipped diagnostic figures (--no-figures)")
+    else:
+        print(f"Saved: {fig_dir / 'das_preprocessed_preview.png'}")
+        print(f"Saved: {fig_dir / 'das_raw_vs_preprocessed.png'}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # Environmental / lake-model data audit (thesis branch)
 
-**Status (updated):** Teacher **Delft3D-FLOW** NetCDF files are present locally under `data/raw/environment/`. This document records **actual** variable names, dimensions, and **final MVP choices**. A machine-readable listing is in **`docs/environmental_nc_inventory.md`** (regenerate with `src/summarize_env_netcdf.py`).
+**Status (updated):** **Delft3D-FLOW** NetCDF files are present locally under `data/raw/environment/`. This document records **actual** variable names, dimensions, and **final MVP choices**. A machine-readable listing is in **`docs/environmental_nc_inventory.md`** (regenerate with `src/summarize_env_netcdf.py`).
 
 **Goal:** Select **1–2 MVP environmental products** (compact exports) to relate **lake hydrodynamics / stratification** to **cable-wide, wave-like DAS structure** without implying every DAS feature is whale-related.
 
@@ -19,7 +19,7 @@
 
 **Constituent:** `NAMCON` → **`Temperature`** — so `R1[:, 0, ...]` is **temperature** (NetCDF `units='1'` is uninformative; interpret via `NAMCON`).
 
-**Coordinates caveat:** `XZ`, `YZ` span **~0–714 km** and **~0–247 km** in the inspected file. **Shot / source positions** in project exports are **CH1903+ / LV95** (e.g. E ≈ 2.68×10⁶ m). The model grid is almost certainly a **projected metric system** (local or national), **not** raw LV95. **Do not** overlay fiber on the model map until a **CRS / affine mapping** is confirmed with the teacher or documentation. Feasibility below assumes a **known transform** or **manual control-point** registration.
+**Coordinates caveat:** `XZ`, `YZ` span **~0–714 km** and **~0–247 km** in the inspected file. **Shot / source positions** in project exports are **CH1903+ / LV95** (e.g. E ≈ 2.68×10⁶ m). The model grid is almost certainly a **projected metric system** (local or national), **not** raw LV95. **Do not** overlay fiber on the model map until a **CRS / affine mapping** is confirmed from documentation or project metadata. Feasibility below assumes a **known transform** or **manual control-point** registration.
 
 ---
 
@@ -121,7 +121,7 @@ Plain-text bullets: model vs observations, **no causal claim** DAS band = curren
 | **Time ↔ DAS shot** | **Feasible** | Map model `time` + epoch to **UTC**; interpolate or **nearest** model step to DAS `t_s`. |
 | **`THERMOCLINE` on fiber** | **Straightforward** | Same `(M,N)` sampling as any face field; mask `_FillValue`. |
 
-**Observed in `Models.delft3dflow_zurich_20220123.nc`:** `UMNLDF` / `VMNLDF` are **all zero** in this teacher export, while **`U1` / `V1`** carry physical horizontal velocities (dry/inactive points use **|U|,|V| ≈ 999** sentinels without a CF `_FillValue`). **`THERMOCLINE`** is **mostly −999** on many timesteps (often under **5%** finite cells), so 2D maps are **patchy** by nature — not a frontend bug. The MVP exporter falls back to **`U1`/`V1`** on an auto-picked wet layer when filtered fields are empty; see `environmental_mvp_meta.json` `viewer_hints` for a reasonable default timestep.
+**Observed in `Models.delft3dflow_zurich_20220123.nc`:** `UMNLDF` / `VMNLDF` are **all zero** in this export, while **`U1` / `V1`** carry physical horizontal velocities (dry/inactive points use **|U|,|V| ≈ 999** sentinels without a CF `_FillValue`). **`THERMOCLINE`** is **mostly -999** on many timesteps (often under **5%** finite cells), so 2D maps are **patchy** by nature -- not a frontend bug. The MVP exporter falls back to **`U1`/`V1`** on an auto-picked wet layer when filtered fields are empty; see `environmental_mvp_meta.json` `viewer_hints` for a reasonable default timestep.
 
 **Primary viewer scalar (current exporter):** Because **`THERMOCLINE`** is too sparse for a first map, exports include **`temperature_t`** from **`R1[:,0,k,:,:]`** (NAMCON temperature) at the **same vertical index k** as the wet-layer rule used for **`U1`/`V1`** (~**39%** finite horizontal coverage after masking **−999**). **`thermocline_t`** remains in the bundle as a **secondary** diagnostic. **`S1`** (water level) has **~100%** grid coverage but only **~centimetre** range in the inspected window — poor visual signal compared to **R1** for the static viewer.
 
@@ -131,7 +131,7 @@ Plain-text bullets: model vs observations, **no causal claim** DAS band = curren
 
 ## 6. Next implementation step
 
-1. **Resolve CRS:** Obtain model–LV95 mapping (or affine) from teacher / Delft3D project metadata.  
+1. **Resolve CRS:** Obtain model-LV95 mapping (or affine) from Delft3D project metadata.  
 2. **Implement `export_environmental_mvp.py`:** Read chosen NC → compute `u_face`, `v_face` on `(M,N)` → sample along fiber → write `environmental_mvp_meta.json` + `environmental_fiber_timeseries.npz`.  
 3. **Validate** one timestep visually (model thermocline vs rough expectation) before viewer wiring.
 

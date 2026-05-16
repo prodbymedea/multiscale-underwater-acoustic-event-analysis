@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Export a teacher-style DAS waterfall preview from raw HDF5.
+Export a notebook-style DAS waterfall preview from raw HDF5.
 
 This artifact is intentionally different from `das_preprocessed_preview.npz`.
-It follows the teacher notebook preview convention: load a compact contiguous
+It follows the reference notebook preview convention: load a compact contiguous
 raw DAS sample window, keep the full channel axis, and store native raw counts
 so broad cable structure remains visible. It is a visualization/context
 artifact, not a whale detection product.
@@ -87,7 +87,7 @@ def parse_args() -> argparse.Namespace:
         "--max-samples",
         type=int,
         default=30_000,
-        help="Maximum raw DAS samples to export when --duration-s is not set; 30000 matches the teacher notebook preview.",
+        help="Maximum raw DAS samples to export when --duration-s is not set; 30000 matches the reference notebook preview.",
     )
     ap.add_argument("--time-downsample", type=int, default=1, help="Keep every Nth raw DAS sample")
     ap.add_argument("--channel-step", type=int, default=1, help="Keep every Nth DAS channel")
@@ -184,7 +184,7 @@ def export_one(args: argparse.Namespace, shot: str) -> Path:
         },
         "amplitude_units": amplitude_units,
         "processing_note": (
-            "Teacher-style raw DAS waterfall preview: compact contiguous raw sample window, full channel axis by default, "
+            "Notebook-style raw DAS waterfall preview: compact contiguous raw sample window, full channel axis by default, "
             "no band-pass, no per-channel robust normalization, no AmpScaling unless requested. "
             "Only optional time/channel subsampling is applied for browser-sized preview."
         ),

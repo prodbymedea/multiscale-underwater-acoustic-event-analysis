@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Build the full local viewer bundle for both Whales shots.
-# Default mode is dry-run to avoid accidental long jobs.
+# Default mode is dry-run to avoid accidental long jobs. Diagnostic PNGs are
+# skipped because the browser viewer consumes JSON/NPZ artifacts directly.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -226,22 +227,20 @@ echo
 echo "== 2) Build base exports for whales shots (zip-free mode) =="
 run_cmd "python3 src/ingest_prototype.py \"$HUMPBACK_H5\" output/shots/whales_humpback --situation \"$SITUATION_H5\""
 run_cmd "python3 src/ingest_prototype.py \"$ORCA_H5\" output/shots/whales_orca --situation \"$SITUATION_H5\""
-run_cmd "python3 src/visualize_export.py output/shots/whales_humpback figures/shots/whales_humpback"
-run_cmd "python3 src/visualize_export.py output/shots/whales_orca figures/shots/whales_orca"
 
 echo
 echo "== 3) Build baseline events for each shot =="
-run_cmd "python3 src/extract_events_baseline.py --shot-dir output/shots/whales_humpback"
-run_cmd "python3 src/extract_events_baseline.py --shot-dir output/shots/whales_orca"
+run_cmd "python3 src/extract_events_baseline.py --shot-dir output/shots/whales_humpback --no-figures"
+run_cmd "python3 src/extract_events_baseline.py --shot-dir output/shots/whales_orca --no-figures"
 
 echo
 echo "== 4) Preprocess DAS, export raw waterfall previews, and build activity maps =="
-run_cmd "python3 src/preprocess_das.py --shot whales_humpback --shot-path \"$HUMPBACK_H5\""
-run_cmd "python3 src/preprocess_das.py --shot whales_orca --shot-path \"$ORCA_H5\""
+run_cmd "python3 src/preprocess_das.py --shot whales_humpback --shot-path \"$HUMPBACK_H5\" --no-figures"
+run_cmd "python3 src/preprocess_das.py --shot whales_orca --shot-path \"$ORCA_H5\" --no-figures"
 run_cmd "python3 src/export_das_waterfall_preview.py --shot whales_humpback --shot-path \"$HUMPBACK_H5\""
 run_cmd "python3 src/export_das_waterfall_preview.py --shot whales_orca --shot-path \"$ORCA_H5\""
-run_cmd "python3 src/build_das_activity_map.py --shot whales_humpback"
-run_cmd "python3 src/build_das_activity_map.py --shot whales_orca"
+run_cmd "python3 src/build_das_activity_map.py --shot whales_humpback --no-figures"
+run_cmd "python3 src/build_das_activity_map.py --shot whales_orca --no-figures"
 
 echo
 echo "== 5) Assemble viewer manifests =="

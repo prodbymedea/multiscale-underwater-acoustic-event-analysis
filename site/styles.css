@@ -164,31 +164,6 @@ button:focus-visible {
   box-shadow: 0 0 0 2px rgba(114, 246, 255, 0.1), 0 0 8px rgba(114, 246, 255, 0.1);
 }
 
-.interval-inputs {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 0.4rem;
-  align-items: center;
-}
-
-.interval-inputs span {
-  color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 500;
-}
-
-.interval-actions {
-  margin-top: 0.48rem;
-  display: flex;
-  gap: 0.42rem;
-  flex-wrap: wrap;
-}
-
-.interval-actions button {
-  padding: 0.36rem 0.62rem;
-  font-size: 0.79rem;
-}
-
 .playback-controls {
   display: flex;
   align-items: center;

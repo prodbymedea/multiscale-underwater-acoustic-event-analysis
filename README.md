@@ -38,14 +38,14 @@ Details: `docs/mvp_definition.md`, `docs/subset_selection.md`, `docs/event_defin
 | `src/visualize_export.py` | Plot exports (DAS linear/robust/normalized, waveform, spectrogram, map) |
 | `src/screen_shots.py` | Batch ingest + plots for configured shots → `output/shots/<slug>/`, `figures/shots/<slug>/` |
 | `src/extract_events_baseline.py` | Baseline `events.json` from `spectrogram.json` (+ optional `das_preview.json`) |
-| `src/preprocess_das.py` | Whales-only DAS preprocessing preview (`.npz` + metadata + raw/preprocessed comparison figures) |
-| `src/build_das_activity_map.py` | Build normalized rolling RMS DAS activity map (`das_activity_map.npz` + metadata + quick-look PNGs) |
+| `src/preprocess_das.py` | Whales-only DAS preprocessing preview (`.npz` + metadata; optional raw/preprocessed comparison figures) |
+| `src/build_das_activity_map.py` | Build normalized rolling RMS DAS activity map (`das_activity_map.npz` + metadata; optional quick-look PNGs) |
 | `src/plot_das_hydrophone_alignment.py` | Validation figure: DAS coverage vs hydrophone score + candidate events |
 | `src/inspect_orca_channels.py` | Orca-only single-channel diagnostics vs activity map |
 | `src/test_orca_bandpass_baseline.py` | Orca native-rate DAS band-pass envelope baseline (diagnostic figures + `orca_bandpass_summary.json`) |
 | `src/build_selected_channel_bundle.py` | Stage 1: compact single-channel NPZ bundle + `selected_channel_bundle.json` for frontend (no HDF5) |
-| `src/summarize_orca_ncc_band.py` | Orca 2000–2490 Hz teacher NCC `.npy` → compact JSON + optional figure + markdown (per-channel max \|NCC\|, hotspot zones; no frontend) |
-| `src/summarize_env_netcdf.py` | Optional: list dims/vars/attrs in teacher lake-model `.nc` files → stdout or Markdown (`docs/environmental_data_audit.md` describes MVP variable choice) |
+| `src/summarize_orca_ncc_band.py` | Orca 2000-2490 Hz external NCC `.npy` -> compact JSON + optional figure + markdown (per-channel max \|NCC\|, hotspot zones; no frontend) |
+| `src/summarize_env_netcdf.py` | Optional: list dims/vars/attrs in provided lake-model `.nc` files -> stdout or Markdown (`docs/environmental_data_audit.md` describes MVP variable choice) |
 | `src/export_environmental_mvp.py` | Environmental MVP: Delft3D `.nc` → `output/environmental/` — map NPZ includes **`temperature_t`** (R1, primary), **`thermocline_t`** (secondary), flow **`u_face_t`/`v_face_t`**, plus meta JSON; fiber NPZ still empty until CRS alignment |
 
 ## Notes on data
@@ -152,6 +152,16 @@ python src/build_das_activity_map.py --shot whales_orca
 python src/check_viewer_ready.py
 python src/check_viewer_ready.py --shot whales_humpback
 ```
+
+**Full viewer build and serve (no diagnostic PNG generation):**
+
+```bash
+bash scripts/build_viewer_all.sh --run --serve
+```
+
+This builds the local `output/` viewer artifacts and serves the static frontend.
+The build script passes `--no-figures` to diagnostic-producing steps and does not
+run `src/visualize_export.py`, so it does not create new PNG files.
 
 **Viewer bundle manifests (Whales shots):**
 
