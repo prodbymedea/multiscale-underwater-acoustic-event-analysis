@@ -545,6 +545,48 @@ async function loadSelectedChannelIfPresent(manifest, manifestUrl) {
   }
 }
 
+function getSelectedChannelPrefetchEntries(sc) {
+  if (!sc?.available || !sc.multiChannel || !sc.entryByCol) {
+    return [];
+  }
+  return Object.entries(sc.entryByCol)
+    .map(([previewCol, entry]) => ({ previewCol: Number(previewCol), entry }))
+    .filter(({ previewCol, entry }) => Number.isFinite(previewCol) && entry?.files)
+    .filter(({ previewCol }) => previewCol !== sc.activePreviewCol);
+}
+
+async function prefetchSelectedChannelVariants(sc) {
+  const entries = getSelectedChannelPrefetchEntries(sc);
+  if (!entries.length) {
+    return;
+  }
+  const startedAt = performance.now();
+  const maxConcurrency = 2;
+  const queue = entries.slice();
+  const workers = Array.from({ length: Math.min(maxConcurrency, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const next = queue.shift();
+      if (!next?.entry?.files) {
+        continue;
+      }
+      const key = String(next.previewCol);
+      if (sc.channelCache?.[key]) {
+        continue;
+      }
+      try {
+        const f = next.entry.files;
+        const payload = await loadSelectedChannelNpzTriple(sc.baseDir, f.signal, f.spectrogram, f.bandpass_score);
+        sc.channelCache[key] = payload;
+        console.info(`[selected-channel] preloaded preview col ${key}`);
+      } catch (error) {
+        console.warn(`[selected-channel] preload failed for preview col ${key}: ${summarizeError(error)}`);
+      }
+    }
+  });
+  await Promise.all(workers);
+  console.info(`[selected-channel] prefetch complete in ${(performance.now() - startedAt).toFixed(1)} ms`);
+}
+
 async function switchSelectedChannelToPreviewCol(previewCol) {
   const sc = state.shotBundle?.selectedChannel;
   if (!sc?.available || !sc.multiChannel) {
@@ -800,6 +842,9 @@ async function onShotChanged() {
         renderManifestMetadata();
         renderAllPanels();
         scheduleMapRender();
+        if (selectedChannel?.available && selectedChannel.multiChannel && shouldPrefetchLargeAssets()) {
+          runWhenIdle(() => prefetchSelectedChannelVariants(selectedChannel), 1200);
+        }
       })();
       scheduleDasWaterfallPrefetch();
       if (state.shotBundle.missingCompatibilityFiles?.length) {
