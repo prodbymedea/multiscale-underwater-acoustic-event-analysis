@@ -1,5 +1,49 @@
 const SHOT_FALLBACK = ["whales_humpback", "whales_orca"];
 
+function detectRepoBasePath() {
+  if (typeof window === "undefined" || !window.location) {
+    return "/";
+  }
+  const { pathname, hostname } = window.location;
+  const isGitHubPages = /github\.io$/i.test(hostname || "");
+  if (!isGitHubPages) {
+    return "/";
+  }
+  const parts = String(pathname || "/").split("/").filter(Boolean);
+  if (parts.length === 0) {
+    return "/";
+  }
+  return `/${parts[0]}/`;
+}
+
+function joinBaseAndRel(base, rel) {
+  const b = String(base || "").replace(/\/+$/, "");
+  const r = String(rel || "").replace(/^\/+/, "");
+  if (!b) {
+    return r ? `/${r}` : "/";
+  }
+  if (!r) {
+    return b;
+  }
+  return `${b}/${r}`;
+}
+
+function uniqueList(values) {
+  const out = [];
+  const seen = new Set();
+  values.forEach((v) => {
+    if (!v || seen.has(v)) {
+      return;
+    }
+    seen.add(v);
+    out.push(v);
+  });
+  return out;
+}
+
+const REPO_BASE_PATH = detectRepoBasePath();
+const IS_GITHUB_PAGES = REPO_BASE_PATH !== "/";
+
 /* ---------------------------------------------------------------------------
  * Asset resolver
  *
@@ -26,20 +70,34 @@ const SHOT_FALLBACK = ["whales_humpback", "whales_orca"];
  * Diagnostics are kept in memory only:
  *   - window.assetDiagnostics → { attempts, lockedBases, failures, summary() }
  * ------------------------------------------------------------------------- */
-const ASSET_BASE_CANDIDATES = {
-  /* Full pipeline outputs (gitignored). */
-  output: ["../output", "./output", "output", "./data"],
-  /* Small JSON samples committed for fallback rendering. */
-  samples: ["../output_samples", "./output_samples", "output_samples"]
-};
+const ASSET_BASE_CANDIDATES = IS_GITHUB_PAGES
+  ? {
+    output: uniqueList([
+      joinBaseAndRel(REPO_BASE_PATH, "output"),
+      "output"
+    ]),
+    samples: uniqueList([
+      joinBaseAndRel(REPO_BASE_PATH, "output_samples"),
+      "output_samples"
+    ])
+  }
+  : {
+    /* Local server mode keeps legacy fallbacks for repo-root and site-root runs. */
+    output: uniqueList(["output", "./output", "../output", "./data"]),
+    samples: uniqueList(["output_samples", "./output_samples", "../output_samples"])
+  };
 
 const assetResolver = {
   lockedBases: { output: null, samples: null },
   attempts: [],
   failures: [],
+  repoBasePath: REPO_BASE_PATH,
+  isGitHubPages: IS_GITHUB_PAGES,
   summary() {
     return {
       lockedBases: { ...this.lockedBases },
+      repoBasePath: this.repoBasePath,
+      isGitHubPages: this.isGitHubPages,
       attempts: this.attempts.slice(),
       failures: this.failures.slice()
     };
@@ -73,12 +131,17 @@ function _normalizeRel(rel) {
 }
 
 function _recordAttempt(kind, base, rel, ok, detail) {
-  const entry = { kind, base, rel, url: `${base}/${rel}`, ok, detail, t: Date.now() };
+  const url = `${base}/${rel}`;
+  const entry = { kind, base, rel, url, ok, detail, t: Date.now() };
   assetResolver.attempts.push(entry);
   if (ok) {
     if (!assetResolver.lockedBases[kind]) {
       assetResolver.lockedBases[kind] = base;
+      console.info(`[asset] locked base for ${kind}: ${base}`);
     }
+    console.debug(`[asset] success ${kind}: ${url}`);
+  } else {
+    console.warn(`[asset] fail ${kind}: ${url} (${detail})`);
   }
 }
 
@@ -134,6 +197,8 @@ const state = {
   eventCount: null,
   dasViewMode: "waterfall",
   shotLoadSeq: 0,
+  activeShotFetchController: null,
+  activeShotFetchSignal: null,
   dasWaterfallCache: {},
   dasWaterfallLoading: {},
   playing: false,

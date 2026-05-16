@@ -128,7 +128,8 @@ function getManifestCandidateUrls(shotOption) {
       const stripped = rel.startsWith("output/") ? rel.slice("output/".length) : rel;
       bases.forEach((base) => {
         push(`${base}/${stripped}`);
-        if (stripped !== rel) {
+        const baseEndsWithOutput = /\/output$/.test(base);
+        if (stripped !== rel && !baseEndsWithOutput) {
           push(`${base}/${rel}`);
         }
       });
@@ -550,6 +551,16 @@ function updateHoverTooltipFromHydro(event) {
 }
 
 async function onShotChanged() {
+  if (state.activeShotFetchController) {
+    try {
+      state.activeShotFetchController.abort();
+    } catch (_error) {
+      // ignore abort errors
+    }
+  }
+  state.activeShotFetchController = new AbortController();
+  state.activeShotFetchSignal = state.activeShotFetchController.signal;
+
   const selectedShotId = el.shotSelect.value;
   const shotOption = state.shotOptions.find((option) => option.shotId === selectedShotId);
   const loadSeq = state.shotLoadSeq + 1;
@@ -646,6 +657,9 @@ async function onShotChanged() {
     el.mapCaption.textContent = "No synchronized data loaded.";
     updateDataStatus(`No viewer-compatible files found for ${selectedShotId}.`);
   } catch (error) {
+    if (error && error.name === "AbortError") {
+      return;
+    }
     state.shotBundle = null;
     state.eventCount = null;
     updateDataStatus(`Failed to load shot ${selectedShotId}: ${summarizeError(error)}`);
@@ -781,11 +795,15 @@ async function initialize() {
     state.indexSource = null;
     state.shotOptions = SHOT_FALLBACK.map((shotId) => ({ shotId, manifestPath: null }));
     const triedShort = (indexLoad.tried || []).map((t) => t.url).slice(0, 4).join(", ");
+    const deployHint = assetResolver.isGitHubPages
+      ? "GitHub Pages mode: make sure pages-dist includes output/ and viewer_index.json."
+      : "Make sure output/ exists at the repo root and you started the server per site/README.md.";
     updateDataStatus(
       `viewer_index.json not found (tried: ${triedShort}). ` +
       "Using fallback shot list (whales_humpback, whales_orca). " +
-      "Make sure output/ exists at the repo root and you started the server per site/README.md."
+      deployHint
     );
+    console.warn("[initialize] viewer_index.json lookup failed", indexLoad.tried || []);
   }
 
   renderShotOptions();
@@ -799,7 +817,8 @@ async function initialize() {
     await onShotChanged();
   }
 
-  assetResolver.summary();
+  const summary = assetResolver.summary();
+  console.info("[initialize] asset resolver summary", summary);
 }
 
 initialize().catch((error) => {

@@ -1,0 +1,156 @@
+{
+  "schema_version": "1.2",
+  "source_files": [
+    "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/data/raw/environment/Models.delft3dflow_zurich_20220123.nc",
+    "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/data/raw/environment/Models.delft3dflow_zurich_20220130.nc"
+  ],
+  "variables": {
+    "flow_u": {
+      "netcdf": "UMNLDF",
+      "export": "u_ms",
+      "units_export": "m s-1",
+      "description": "U1/V1 layer 68 (Eulerian; UMNLDF/VMNLDF empty here)",
+      "netcdf_fallback": "U1",
+      "vertical_index_k": 68
+    },
+    "flow_v": {
+      "netcdf": "VMNLDF",
+      "export": "v_ms",
+      "units_export": "m s-1",
+      "description": "U1/V1 layer 68 (Eulerian; UMNLDF/VMNLDF empty here)",
+      "netcdf_fallback": "V1",
+      "vertical_index_k": 68
+    },
+    "thermocline": {
+      "netcdf": "THERMOCLINE",
+      "export": "thermocline_m",
+      "units_export": "m",
+      "fill_value_masked": -999.0
+    },
+    "temperature_3d": {
+      "netcdf": "R1",
+      "lstsci_index": 0,
+      "export": "temperature_zt",
+      "shape": [
+        "time",
+        "depth",
+        "M",
+        "N"
+      ],
+      "depth_axis": "depth_m",
+      "units_file": "1",
+      "units_interpretation": "Nominal NetCDF units; displayed as \u00b0C (typical lake T magnitude)."
+    },
+    "flow_u_3d": {
+      "netcdf": "U1",
+      "export": "u_face_zt",
+      "shape": [
+        "time",
+        "depth",
+        "M",
+        "N"
+      ],
+      "depth_axis": "depth_m",
+      "units_export": "m s-1"
+    },
+    "flow_v_3d": {
+      "netcdf": "V1",
+      "export": "v_face_zt",
+      "shape": [
+        "time",
+        "depth",
+        "M",
+        "N"
+      ],
+      "depth_axis": "depth_m",
+      "units_export": "m s-1"
+    },
+    "temperature": {
+      "netcdf": "R1",
+      "lstsci_index": 0,
+      "vertical_index_k": 68,
+      "export": "temperature_t",
+      "units_file": "1",
+      "units_interpretation": "Nominal NetCDF units; displayed as \u00b0C (typical lake T magnitude)."
+    }
+  },
+  "units_from_file": {
+    "UMNLDF": "m/s",
+    "THERMOCLINE": "m",
+    "XZ": "m"
+  },
+  "dimensions": {
+    "M": 212,
+    "N": 34,
+    "Nt_exported": 24,
+    "description": "Horizontal curvilinear grid; flow stagger averaged to cell (M,N).",
+    "M_exported": 212,
+    "N_exported": 34,
+    "time_stride": 1,
+    "space_stride": 1,
+    "N_depth_exported": 75,
+    "depth_axis": "depth_m, derived as abs(ZK_LYR); use nearest layer for requested depth."
+  },
+  "time": {
+    "n_steps_source": 56,
+    "time_coordinate_units": "seconds since 2008-03-01 00:00:00",
+    "exported_time_axis": "unix_epoch_seconds_utc",
+    "time_s_epoch_unix": {
+      "min": 1643068800.0,
+      "max": 1643317184.0
+    }
+  },
+  "crs_and_alignment": {
+    "status": "pending_verified_transform",
+    "summary": "Model horizontal coordinates XZ, YZ are in the Delft3D-FLOW horizontal plane (CF axis: XZ positive east, YZ positive north; see file attributes). Fiber geometry from Situation.h5 / situation.json is exported in CH1903+ / LV95 (large easting/northing, ~1e6 m). No verified affine or control-point mapping between these frames is stored in this repository.",
+    "model_frame": "XZ_YZ_meters_model_plane",
+    "fiber_frame": "LV95_easting_northing_when_present",
+    "overlay_feasibility": "Map rasters are written in model native XZ,YZ. Georeferenced overlay on LV95 bathymetry requires an external or future transform."
+  },
+  "fiber_timeseries": {
+    "projection": "pending",
+    "arrays": "time_s only; u_ms, v_ms, thermocline_m along fiber are shape (Nt, 0) until a verified model\u2194LV95 mapping exists.",
+    "reason": "Interpolating environmental fields onto fiber requires shared coordinates. Repository does not yet contain a validated transform."
+  },
+  "processing": [
+    "UMNLDF/VMNLDF: staggered components averaged to (M,N) per environmental_data_audit.md.",
+    "Rotation to east/north via ALFAS when present; else grid-aligned u,v exported.",
+    "THERMOCLINE: values equal to -999.0 masked to NaN (exported as thermocline_t; sparse).",
+    "UMNLDF/VMNLDF are all zero in this file; using U1/V1 at vertical index k=68 (auto-picked wet layer; values with |U| or |V| \u2265 998 masked as dry).",
+    "Time window clipped to 2022-01-25T00:00:00+00:00 inclusive through 2022-01-28T00:00:00+00:00 exclusive; kept source indices 16..39 (24 of 56 timesteps).",
+    "ALFAS applied: exported u_ms/v_ms are east/north components.",
+    "Depth-enabled export: wrote R1 temperature for all available vertical layer centres (temperature_zt with depth_m from ZK_LYR, sorted shallow to deep).",
+    "Depth-enabled export: wrote U1/V1 currents for all available vertical layers (u_face_zt/v_face_zt).",
+    "Primary scalar: R1 (NAMCON=temperature) layer k=68, aligned with wet-layer heuristic used for U1/V1. Dry/land masked at -999. File attribute units are nominal; viewer labels \u00b0C."
+  ],
+  "outputs": {
+    "environmental_mvp_meta.json": "this file",
+    "environmental_map_fields.npz": "Keys: XZ, YZ (M,N), time_s (Nt,), u_face_t, v_face_t, temperature_t (Nt,M,N) primary scalar, thermocline_t secondary; model plane.",
+    "environmental_fiber_timeseries.npz": "Keys: time_s (Nt,); along_m (0,); u_ms, v_ms, thermocline_m (Nt,0) until CRS resolved."
+  },
+  "mvp_scalar": {
+    "primary": "temperature_t",
+    "secondary": "thermocline_t",
+    "rationale": "R1 temperature at the wet vertical layer has much higher horizontal coverage than THERMOCLINE in the audited 20220123 file; thermocline remains exported as a secondary diagnostic."
+  },
+  "requested_time_window_utc": {
+    "start_inclusive": "2022-01-25T00:00:00Z",
+    "end_exclusive": "2022-01-28T00:00:00Z",
+    "purpose": "Thesis dashboard focus window covering 2022-01-25 through 2022-01-27."
+  },
+  "exported_time_window_utc": {
+    "start": "2022-01-25T00:00:00Z",
+    "end": "2022-01-27T20:59:44Z",
+    "n_steps_before_stride": 24
+  },
+  "viewer_hints": {
+    "primary_scalar": "temperature_t",
+    "default_time_index": 12,
+    "default_time_index_note": "Among steps with R1 temperature coverage coverage \u226513.8% (max 39.5%), closest to thesis whale-window UTC.",
+    "temperature_r1_layer_k": 68,
+    "temperature_finite_fraction_global": 0.39456159822419534,
+    "temperature_note": "Map shows R1 (constituent index 0 = temperature per NAMCON) on the horizontal grid; dry/land (-999) masked. Not causal proof vs DAS; model-frame context only.",
+    "thermocline_finite_fraction_global": 0.005104282278949316,
+    "thermocline_note": "thermocline_t is still exported but is mostly -999 in this run \u2014 use for specialist checks, not as the main viewer layer."
+  }
+}

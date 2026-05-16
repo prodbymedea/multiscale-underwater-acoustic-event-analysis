@@ -1,0 +1,55 @@
+{
+  "Recorder-C": {
+    "attrs": {
+      "Position X (m)": 2683183.5746440473,
+      "Position Y (m)": 1246148.7021728863,
+      "Start Time": "2022-01-26T04:47:42.603980+00:00",
+      "End Time": "2022-01-26T04:49:29.755340+00:00",
+      "Duration (s)": 107.15135955810547,
+      "Sample Rate (Hz)": 50000.0,
+      "Samples": 5357568,
+      "Signal": "Sound Pressure",
+      "Unit": "Pa",
+      "Array Type": "Tetrahedron",
+      "Array Size (m)": 0.7,
+      "Array Depth (m)": 9.3,
+      "Channels": [
+        "Tetra-Top",
+        "Tetra-A",
+        "Tetra-B",
+        "Tetra-C"
+      ],
+      "Hydrophone Serial Numbers": [
+        1205001,
+        1205011,
+        1205002,
+        1205005
+      ],
+      "Hydrophone Sensitivities (dB re 1V/uPa)": [
+        -169.6,
+        -169.4,
+        -170.1,
+        -170.0
+      ]
+    },
+    "shape_npts_x_4ch": [
+      5357568,
+      4
+    ],
+    "dtype": "float32",
+    "fs_hz": 50000.0,
+    "duration_s": 107.151,
+    "channels": [
+      "Tetra-Top",
+      "Tetra-A",
+      "Tetra-B",
+      "Tetra-C"
+    ],
+    "rms_pa": {
+      "Tetra-Top": 0.2052486091852188,
+      "Tetra-A": 0.24132072925567627,
+      "Tetra-B": 0.2401086688041687,
+      "Tetra-C": 0.22906629741191864
+    }
+  }
+}

@@ -1,17 +1,80 @@
-async function fetchJson(url) {
-  const response = await fetch(url, { cache: "no-cache" });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+const requestCache = {
+  json: new Map(),
+  arrayBuffer: new Map(),
+  inFlightJson: new Map(),
+  inFlightArrayBuffer: new Map()
+};
+
+function _activeFetchSignal(options) {
+  if (options && options.signal) {
+    return options.signal;
   }
-  return response.json();
+  if (typeof state !== "undefined" && state.activeShotFetchSignal) {
+    return state.activeShotFetchSignal;
+  }
+  return undefined;
 }
 
-async function fetchArrayBuffer(url) {
-  const response = await fetch(url, { cache: "no-cache" });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+async function fetchJson(url, options = {}) {
+  if (!options.noMemoryCache && requestCache.json.has(url)) {
+    return requestCache.json.get(url);
   }
-  return response.arrayBuffer();
+  if (!options.noMemoryCache && requestCache.inFlightJson.has(url)) {
+    return requestCache.inFlightJson.get(url);
+  }
+  const signal = _activeFetchSignal(options);
+  const startedAt = performance.now();
+  const promise = (async () => {
+    const response = await fetch(url, { cache: "default", signal });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    if (!options.noMemoryCache) {
+      requestCache.json.set(url, payload);
+    }
+    console.debug(`[fetchJson] ${url} (${(performance.now() - startedAt).toFixed(1)} ms)`);
+    return payload;
+  })();
+  if (!options.noMemoryCache) {
+    requestCache.inFlightJson.set(url, promise);
+  }
+  try {
+    return await promise;
+  } finally {
+    requestCache.inFlightJson.delete(url);
+  }
+}
+
+async function fetchArrayBuffer(url, options = {}) {
+  if (!options.noMemoryCache && requestCache.arrayBuffer.has(url)) {
+    return requestCache.arrayBuffer.get(url);
+  }
+  if (!options.noMemoryCache && requestCache.inFlightArrayBuffer.has(url)) {
+    return requestCache.inFlightArrayBuffer.get(url);
+  }
+  const signal = _activeFetchSignal(options);
+  const startedAt = performance.now();
+  const promise = (async () => {
+    const response = await fetch(url, { cache: "default", signal });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.arrayBuffer();
+    if (!options.noMemoryCache) {
+      requestCache.arrayBuffer.set(url, payload);
+    }
+    console.debug(`[fetchArrayBuffer] ${url} (${(performance.now() - startedAt).toFixed(1)} ms)`);
+    return payload;
+  })();
+  if (!options.noMemoryCache) {
+    requestCache.inFlightArrayBuffer.set(url, promise);
+  }
+  try {
+    return await promise;
+  } finally {
+    requestCache.inFlightArrayBuffer.delete(url);
+  }
 }
 
 function getNumpyDescrInfo(descrRaw) {
@@ -186,8 +249,8 @@ function unzipNpzToArrays(arrayBuffer) {
   return out;
 }
 
-async function fetchNpz(url) {
-  const ab = await fetchArrayBuffer(url);
+async function fetchNpz(url, options = {}) {
+  const ab = await fetchArrayBuffer(url, options);
   return unzipNpzToArrays(ab);
 }
 
@@ -197,38 +260,60 @@ function manifestRelativeFetchUrls(baseDir, relPath) {
   }
   const trimmed = relPath.trim().replace(/^\.\//, "");
   const urls = [];
-  urls.push(`${baseDir}/${trimmed}`);
+  const seen = new Set();
+  const push = (u) => {
+    if (!u || seen.has(u)) {
+      return;
+    }
+    seen.add(u);
+    urls.push(u);
+  };
+  push(`${baseDir}/${trimmed}`);
   if (trimmed.startsWith("output/") || trimmed.includes("output/shots/")) {
     const slashIdx = trimmed.lastIndexOf("/");
     const baseName = slashIdx >= 0 ? trimmed.slice(slashIdx + 1) : trimmed;
     const alt = `${baseDir}/${baseName}`;
-    if (alt !== urls[0]) {
-      urls.push(alt);
-    }
+    push(alt);
   }
   return urls;
 }
 
 async function fetchNpzFromManifestPaths(baseDir, relPath) {
   const urls = manifestRelativeFetchUrls(baseDir, relPath);
+  const failures = [];
   for (const url of urls) {
     try {
-      return await fetchNpz(url);
-    } catch (_) {
-      // try next candidate
+      const data = await fetchNpz(url);
+      if (failures.length > 0) {
+        console.info(`[fetchNpzFromManifestPaths] fallback succeeded: ${url}`);
+      }
+      return data;
+    } catch (error) {
+      failures.push({ url, error: summarizeError(error) });
     }
+  }
+  if (failures.length > 0) {
+    console.warn(`[fetchNpzFromManifestPaths] all failed for ${relPath}`, failures);
   }
   return null;
 }
 
 async function fetchJsonFromManifestPaths(baseDir, relPath) {
   const urls = manifestRelativeFetchUrls(baseDir, relPath);
+  const failures = [];
   for (const url of urls) {
     try {
-      return await fetchJson(url);
-    } catch (_) {
-      // try next candidate
+      const data = await fetchJson(url);
+      if (failures.length > 0) {
+        console.info(`[fetchJsonFromManifestPaths] fallback succeeded: ${url}`);
+      }
+      return data;
+    } catch (error) {
+      failures.push({ url, error: summarizeError(error) });
     }
+  }
+  if (failures.length > 0) {
+    console.warn(`[fetchJsonFromManifestPaths] all failed for ${relPath}`, failures);
   }
   return null;
 }

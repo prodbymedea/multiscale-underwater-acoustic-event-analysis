@@ -37,9 +37,7 @@ jobs:
 
       - name: Prepare Pages artifact
         run: |
-          mkdir -p pages-dist
-          rsync -av --exclude='output' --exclude='output_samples' site/ pages-dist/
-          cp -R output_samples pages-dist/output_samples
+          bash scripts/build_pages_dist.sh
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

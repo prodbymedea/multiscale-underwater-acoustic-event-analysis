@@ -1,0 +1,106 @@
+{
+  "schema_version": "baseline_hydrophone_stft_v1",
+  "shot_id": "whales_humpback",
+  "source_h5": "2022-01-26--04-46-16--Humpback.h5",
+  "source_files": {
+    "spectrogram": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_humpback/spectrogram.json",
+    "shot_metadata": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_humpback/shot_metadata.json",
+    "das_preview": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_humpback/das_preview.json"
+  },
+  "parameters": {
+    "recorder": "Recorder-C",
+    "preview_channel": "Tetra-Top",
+    "band_hz": [
+      30.0,
+      1500.0
+    ],
+    "mad_k": 3.0,
+    "threshold_db": -54.9128,
+    "score_definition": "mean Sxx_db over frequency bins in band, per STFT frame",
+    "score_normalization": {
+      "method": "robust percentile normalization to [0,1]",
+      "p_low": 5.0,
+      "p_high": 99.0,
+      "lo": -62.32306655120849,
+      "hi": -53.68814670283
+    },
+    "max_gap_frames": 2,
+    "min_duration_s": 0.25
+  },
+  "n_events": 3,
+  "events": [
+    {
+      "event_id": "whales_humpback_001",
+      "shot_id": "whales_humpback",
+      "start_time_s": 14.1312,
+      "end_time_s": 14.7456,
+      "duration_s": 0.7168,
+      "score": -54.548,
+      "mean_score": -54.548,
+      "peak_time_s": 14.5408,
+      "peak_score": -53.68666670481364,
+      "max_normalized_score": 1.0,
+      "threshold": -54.91280150492349,
+      "frequency_band_hz": [
+        30.0,
+        1500.0
+      ],
+      "source_score_file": "hydrophone_event_score.npz",
+      "detection_basis": "hydrophone STFT mean dB (30-1500 Hz), Recorder-C/Tetra-Top; threshold median+MAD*k (k=3.0)",
+      "notes": "score_peak_db=-53.69, mean_excess_over_threshold_db=0.36",
+      "source_h5": "2022-01-26--04-46-16--Humpback.h5",
+      "das_support": {
+        "peak_std_channel_index": 18,
+        "peak_std_distance_m": 943.9466171264648,
+        "peak_std_value": 1107.7891143877723
+      }
+    },
+    {
+      "event_id": "whales_humpback_002",
+      "shot_id": "whales_humpback",
+      "start_time_s": 26.112,
+      "end_time_s": 26.828799999999998,
+      "duration_s": 0.8192,
+      "score": -53.725,
+      "mean_score": -53.725,
+      "peak_time_s": 26.4192,
+      "peak_score": -52.17666666666667,
+      "max_normalized_score": 1.0,
+      "threshold": -54.91280150492349,
+      "frequency_band_hz": [
+        30.0,
+        1500.0
+      ],
+      "source_score_file": "hydrophone_event_score.npz",
+      "detection_basis": "hydrophone STFT mean dB (30-1500 Hz), Recorder-C/Tetra-Top; threshold median+MAD*k (k=3.0)",
+      "notes": "score_peak_db=-52.18, mean_excess_over_threshold_db=1.19",
+      "source_h5": "2022-01-26--04-46-16--Humpback.h5",
+      "das_support": {
+        "peak_std_channel_index": 18,
+        "peak_std_distance_m": 943.9466171264648,
+        "peak_std_value": 1099.7570072516714
+      }
+    },
+    {
+      "event_id": "whales_humpback_003",
+      "shot_id": "whales_humpback",
+      "start_time_s": 33.6896,
+      "end_time_s": 33.9968,
+      "duration_s": 0.4096,
+      "score": -54.658,
+      "mean_score": -54.658,
+      "peak_time_s": 33.6896,
+      "peak_score": -54.13333333333333,
+      "max_normalized_score": 0.9484434723854065,
+      "threshold": -54.91280150492349,
+      "frequency_band_hz": [
+        30.0,
+        1500.0
+      ],
+      "source_score_file": "hydrophone_event_score.npz",
+      "detection_basis": "hydrophone STFT mean dB (30-1500 Hz), Recorder-C/Tetra-Top; threshold median+MAD*k (k=3.0)",
+      "notes": "score_peak_db=-54.13, mean_excess_over_threshold_db=0.25",
+      "source_h5": "2022-01-26--04-46-16--Humpback.h5"
+    }
+  ]
+}

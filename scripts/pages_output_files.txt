@@ -1,0 +1,58 @@
+# Required runtime files for GitHub Pages viewer (minimal production set)
+# One glob per line. Paths are repo-relative.
+
+# Viewer index
+output/viewer_index.json
+
+# Shot manifests
+output/shots/whales_humpback/viewer_manifest.json
+output/shots/whales_orca/viewer_manifest.json
+
+# Core per-shot metadata used on initial shot load
+output/shots/whales_humpback/shot_metadata.json
+output/shots/whales_humpback/recorders_summary.json
+output/shots/whales_humpback/events.json
+output/shots/whales_humpback/situation.json
+output/shots/whales_orca/shot_metadata.json
+output/shots/whales_orca/recorders_summary.json
+output/shots/whales_orca/events.json
+output/shots/whales_orca/situation.json
+
+# DAS + hydro overlays (loaded on shot load / DAS panel)
+output/shots/whales_humpback/das_waterfall_preview.npz
+output/shots/whales_humpback/das_preprocessed_preview.npz
+output/shots/whales_humpback/hydrophone_event_score.npz
+output/shots/whales_humpback/hydrophone_event_score_metadata.json
+output/shots/whales_orca/das_waterfall_preview.npz
+output/shots/whales_orca/das_preprocessed_preview.npz
+output/shots/whales_orca/hydrophone_event_score.npz
+output/shots/whales_orca/hydrophone_event_score_metadata.json
+
+# Selected-channel runtime (default + multi-channel switching)
+output/shots/whales_humpback/selected_channels_index.json
+output/shots/whales_humpback/selected_channel_bundle.json
+output/shots/whales_humpback/selected_channel_signal.npz
+output/shots/whales_humpback/selected_channel_spectrogram.npz
+output/shots/whales_humpback/selected_channel_bandpass_score.npz
+output/shots/whales_humpback/selected_channel_p*_signal.npz
+output/shots/whales_humpback/selected_channel_p*_spectrogram.npz
+output/shots/whales_humpback/selected_channel_p*_bandpass_score.npz
+output/shots/whales_orca/selected_channels_index.json
+output/shots/whales_orca/selected_channel_bundle.json
+output/shots/whales_orca/selected_channel_signal.npz
+output/shots/whales_orca/selected_channel_spectrogram.npz
+output/shots/whales_orca/selected_channel_bandpass_score.npz
+output/shots/whales_orca/selected_channel_p*_signal.npz
+output/shots/whales_orca/selected_channel_p*_spectrogram.npz
+output/shots/whales_orca/selected_channel_p*_bandpass_score.npz
+
+# Source-audio compare + playback assets
+output/shots/whales_humpback/*audio_compare.json
+output/shots/whales_humpback/*source_segment*.wav
+output/shots/whales_orca/*audio_compare.json
+output/shots/whales_orca/*source_segment*.wav
+
+# Environmental dashboard runtime
+output/environmental/environmental_map_fields.npz
+output/environmental/environmental_mvp_meta.json
+output/environmental/alplakes_geometry.txt.gz

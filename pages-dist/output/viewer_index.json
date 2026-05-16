@@ -1,0 +1,44 @@
+{
+  "schema_version": "viewer_index_v1",
+  "project_title": "Multiscale data visualization and event analysis for a distributed underwater acoustic monitoring system",
+  "scope": "Whales subset only",
+  "shots_available": [
+    "whales_humpback",
+    "whales_orca"
+  ],
+  "recommended_primary_shot": "whales_humpback",
+  "recommended_secondary_shot": "whales_orca",
+  "all_viewer_ready": true,
+  "shots": [
+    {
+      "shot_id": "whales_humpback",
+      "display_name": "2022-01-26--04-46-16--Humpback.h5",
+      "viewer_ready": true,
+      "event_count": 3,
+      "available_time_range_s": [
+        0.25,
+        32.95000076293945
+      ],
+      "recommended_default_interval_s": [
+        12.4384,
+        16.4384
+      ],
+      "viewer_manifest_file": "output/shots/whales_humpback/viewer_manifest.json"
+    },
+    {
+      "shot_id": "whales_orca",
+      "display_name": "2022-01-26--04-47-42--Orca.h5",
+      "viewer_ready": true,
+      "event_count": 2,
+      "available_time_range_s": [
+        0.25,
+        101.94999694824219
+      ],
+      "recommended_default_interval_s": [
+        44.08,
+        48.08
+      ],
+      "viewer_manifest_file": "output/shots/whales_orca/viewer_manifest.json"
+    }
+  ]
+}

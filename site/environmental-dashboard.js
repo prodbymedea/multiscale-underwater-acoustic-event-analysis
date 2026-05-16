@@ -1,8 +1,27 @@
-const ENV_BASES = ["output/environmental", "./output/environmental", "../output/environmental"];
+function envDetectRepoBasePath() {
+  const { pathname, hostname } = window.location;
+  const isGitHubPages = /github\.io$/i.test(hostname || "");
+  if (!isGitHubPages) {
+    return "/";
+  }
+  const parts = String(pathname || "/").split("/").filter(Boolean);
+  return parts.length ? `/${parts[0]}/` : "/";
+}
+
+function envJoin(base, rel) {
+  const b = String(base || "").replace(/\/+$/, "");
+  const r = String(rel || "").replace(/^\/+/, "");
+  return b ? `${b}/${r}` : `/${r}`;
+}
+
+const ENV_REPO_BASE = envDetectRepoBasePath();
+const ENV_IS_GITHUB_PAGES = ENV_REPO_BASE !== "/";
+
+const ENV_BASES = ENV_IS_GITHUB_PAGES
+  ? [envJoin(ENV_REPO_BASE, "output/environmental"), "output/environmental"]
+  : ["output/environmental", "./output/environmental", "../output/environmental"];
 const ALPLAKES_GEOMETRY_URLS = [
-  "output/environmental/alplakes_geometry.txt.gz",
-  "./output/environmental/alplakes_geometry.txt.gz",
-  "../output/environmental/alplakes_geometry.txt.gz",
+  ...ENV_BASES.map((base) => `${base}/alplakes_geometry.txt.gz`),
   "https://alplakes-eawag.s3.eu-central-1.amazonaws.com/simulations/delft3d-flow/cache/zurich/geometry.txt.gz",
   "https://alplakes-eawag.s3.eu-central-1.amazonaws.com/simulations/delft3d-flow/cache/zurich/geometry.txt.gz?timestamp=1778284800"
 ];
@@ -80,6 +99,65 @@ const state = {
   mapViewChanging: false,
   overlayRedrawPending: false
 };
+
+const envRequestCache = {
+  arrayBuffer: new Map(),
+  text: new Map(),
+  inFlightArrayBuffer: new Map(),
+  inFlightText: new Map()
+};
+
+async function envFetchArrayBuffer(url) {
+  if (envRequestCache.arrayBuffer.has(url)) {
+    return envRequestCache.arrayBuffer.get(url);
+  }
+  if (envRequestCache.inFlightArrayBuffer.has(url)) {
+    return envRequestCache.inFlightArrayBuffer.get(url);
+  }
+  const started = performance.now();
+  const p = (async () => {
+    const res = await fetch(url, { cache: "default" });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const ab = await res.arrayBuffer();
+    envRequestCache.arrayBuffer.set(url, ab);
+    console.debug(`[envFetchArrayBuffer] ${url} (${(performance.now() - started).toFixed(1)} ms)`);
+    return ab;
+  })();
+  envRequestCache.inFlightArrayBuffer.set(url, p);
+  try {
+    return await p;
+  } finally {
+    envRequestCache.inFlightArrayBuffer.delete(url);
+  }
+}
+
+async function envFetchText(url) {
+  if (envRequestCache.text.has(url)) {
+    return envRequestCache.text.get(url);
+  }
+  if (envRequestCache.inFlightText.has(url)) {
+    return envRequestCache.inFlightText.get(url);
+  }
+  const started = performance.now();
+  const p = (async () => {
+    const res = await fetch(url, { cache: "default" });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const txt = await res.text();
+    envRequestCache.text.set(url, txt);
+    console.debug(`[envFetchText] ${url} (${(performance.now() - started).toFixed(1)} ms)`);
+    return txt;
+  })();
+  envRequestCache.inFlightText.set(url, p);
+  try {
+    return await p;
+  } finally {
+    envRequestCache.inFlightText.delete(url);
+  }
+}
 
 function getReturnShotId() {
   try {
@@ -201,23 +279,23 @@ function unzipNpz(buffer) {
 }
 
 async function loadEnvNpz() {
+  const failures = [];
   for (const base of ENV_BASES) {
     try {
-      const res = await fetch(`${base}/environmental_map_fields.npz`, { cache: "no-cache" });
-      if (res.ok) return unzipNpz(await res.arrayBuffer());
-    } catch (_) {
-      // Try next base.
+      const url = `${base}/environmental_map_fields.npz`;
+      const ab = await envFetchArrayBuffer(url);
+      console.info(`[environment] loaded map fields from ${url}`);
+      return unzipNpz(ab);
+    } catch (error) {
+      failures.push({ base, error: String((error && error.message) || error) });
     }
   }
+  console.warn("[environment] failed environmental_map_fields load", failures);
   throw new Error("environmental_map_fields.npz not found");
 }
 
 async function fetchGzipText(url) {
-  const res = await fetch(url, { cache: "no-cache" });
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status}`);
-  }
-  const compressed = await res.arrayBuffer();
+  const compressed = await envFetchArrayBuffer(url);
   if (typeof DecompressionStream === "undefined") {
     throw new Error("DecompressionStream is not supported in this browser");
   }
