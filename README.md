@@ -153,13 +153,28 @@ python src/check_viewer_ready.py
 python src/check_viewer_ready.py --shot whales_humpback
 ```
 
-**Full viewer build and serve (no diagnostic PNG generation):**
+**Local viewer launch when `output/` already exists:**
+
+```bash
+python -m http.server 8000 --directory site
+# open http://localhost:8000/
+```
+
+Use this for normal local review after the viewer artifacts have already been
+built. It does **not** rerun the Python pipeline.
+
+**Rebuild full viewer artifacts only when `output/` is missing or stale:**
+
+```bash
+bash scripts/build_viewer_all.sh --run
+```
+
+To rebuild and immediately serve the static frontend:
 
 ```bash
 bash scripts/build_viewer_all.sh --run --serve
 ```
 
-This builds the local `output/` viewer artifacts and serves the static frontend.
 The build script passes `--no-figures` to diagnostic-producing steps and does not
 run `src/visualize_export.py`, so it does not create new PNG files.
 
@@ -185,7 +200,7 @@ Writes `output/environmental/environmental_mvp_meta.json`, `environmental_map_fi
 The viewer in `site/` is pure static (no Vite, no npm, no backend). Browsers
 block `fetch()` over `file://`, so a plain HTTP server is required.
 
-**Canonical launch:**
+**Canonical launch when `output/` already exists:**
 
 ```bash
 # from the repository root

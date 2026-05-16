@@ -7,6 +7,9 @@ This directory contains the frontend synchronized viewer for the thesis MVP scop
 The frontend is **pure static**: no Vite, no npm, no backend. It only needs a
 plain HTTP server (browsers refuse `fetch()` over `file://`).
 
+Use the commands below when `output/` already exists. They only serve the static
+site and do not rebuild the Python-generated viewer artifacts.
+
 ### Mode A — recommended
 
 ```bash
@@ -53,6 +56,18 @@ site/                              # this directory (with the symlinks above)
 
 If `output/` is missing the viewer falls back to the `output_samples/` JSONs and
 shows a readable status; per-panel errors list the URLs that were tried.
+
+To regenerate full `output/` artifacts, run from the repository root:
+
+```bash
+bash scripts/build_viewer_all.sh --run
+```
+
+To regenerate and immediately serve:
+
+```bash
+bash scripts/build_viewer_all.sh --run --serve
+```
 
 ### Asset resolver and diagnostics
 
