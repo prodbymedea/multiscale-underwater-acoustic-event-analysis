@@ -148,6 +148,132 @@ function getBaseDir(url) {
   return idx >= 0 ? url.slice(0, idx) : "";
 }
 
+function runWhenIdle(task, timeout = 1800) {
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(() => {
+      void task();
+    }, { timeout });
+    return;
+  }
+  setTimeout(() => {
+    void task();
+  }, 700);
+}
+
+function shouldPrefetchLargeAssets() {
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!conn) {
+    return true;
+  }
+  if (conn.saveData) {
+    return false;
+  }
+  const type = String(conn.effectiveType || "").toLowerCase();
+  return type !== "slow-2g" && type !== "2g";
+}
+
+async function prefetchManifestAndWarmFilesForShot(shotOption) {
+  const candidates = getManifestCandidateUrls(shotOption);
+  const manifestRes = await tryLoadJsonFromUrls(candidates);
+  if (!manifestRes?.data || !manifestRes?.url) {
+    return;
+  }
+
+  const manifest = manifestRes.data;
+  const baseDir = getBaseDir(manifestRes.url);
+  const files = manifest.files || {};
+  const prefetchSignal = new AbortController().signal;
+
+  const jsonRel = [
+    files.shot_metadata || "shot_metadata.json",
+    files.recorders_summary || "recorders_summary.json",
+    files.events || "events.json",
+    files.situation || "situation.json",
+    files.hydrophone_score_metadata_file || files.hydrophone_event_score_metadata || "hydrophone_event_score_metadata.json",
+    files.selected_channels_index || "selected_channels_index.json",
+    files.selected_channel_bundle || "selected_channel_bundle.json"
+  ];
+
+  for (const rel of jsonRel) {
+    if (!rel) {
+      continue;
+    }
+    try {
+      await fetchJsonFromManifestPaths(baseDir, rel);
+    } catch (_error) {
+      // Keep warmup best-effort and non-fatal.
+    }
+  }
+
+  const npzRel = [
+    files.hydrophone_score_file || files.hydrophone_event_score || "hydrophone_event_score.npz",
+    files.selected_channel_signal || "selected_channel_signal.npz",
+    files.selected_channel_spectrogram || "selected_channel_spectrogram.npz",
+    files.selected_channel_bandpass_score || "selected_channel_bandpass_score.npz"
+  ];
+  if (shouldPrefetchLargeAssets()) {
+    npzRel.push(files.das_waterfall_preview || files.das_preprocessed_preview_file || "das_waterfall_preview.npz");
+  }
+
+  for (const rel of npzRel) {
+    if (!rel) {
+      continue;
+    }
+    const urls = manifestRelativeFetchUrls(baseDir, rel);
+    for (const url of urls) {
+      try {
+        await fetchArrayBuffer(url, { signal: prefetchSignal });
+        break;
+      } catch (_error) {
+        // Try fallback URL candidate.
+      }
+    }
+  }
+}
+
+async function warmupRuntimeCaches() {
+  if (!state.shotOptions?.length) {
+    return;
+  }
+  const currentShotId = state.selectedShotId;
+  const otherShot = state.shotOptions.find((option) => option.shotId !== currentShotId);
+  if (otherShot) {
+    await prefetchManifestAndWarmFilesForShot(otherShot);
+  }
+
+  const sac = state.shotBundle?.sourceAudioCompare || state.shotBundle?.orcaAudioCompare;
+  const relAudio = sac?.doc?.source_wav_playback_file || sac?.doc?.source_wav_file;
+  if (sac?.baseDir && relAudio && shouldPrefetchLargeAssets()) {
+    try {
+      await fetchArrayBuffer(`${sac.baseDir}/${relAudio}`, { signal: new AbortController().signal });
+    } catch (_error) {
+      // Audio warmup is optional.
+    }
+  }
+
+  const outputBase = assetResolver.lockedBases.output || OUTPUT_BASE_CANDIDATES[0] || "output";
+  const envFiles = [
+    "environmental/environmental_mvp_meta.json",
+    "environmental/alplakes_geometry.txt.gz"
+  ];
+  if (shouldPrefetchLargeAssets()) {
+    envFiles.push("environmental/environmental_map_fields.npz");
+  }
+  for (const rel of envFiles) {
+    const url = `${outputBase}/${rel}`;
+    try {
+      if (rel.endsWith(".json")) {
+        await fetchJson(url, { signal: new AbortController().signal });
+      } else {
+        await fetchArrayBuffer(url, { signal: new AbortController().signal });
+      }
+    } catch (_error) {
+      // Environment warmup is optional.
+    }
+  }
+  console.info("[warmup] runtime cache warmup completed");
+}
+
 function buildMetaFromChannelEntry(entry) {
   if (!entry) {
     return {};
@@ -815,6 +941,7 @@ async function initialize() {
     el.shotSelect.value = initialShot;
     updateEnvironmentalDashboardLink();
     await onShotChanged();
+    runWhenIdle(warmupRuntimeCaches, 2200);
   }
 
   const summary = assetResolver.summary();
