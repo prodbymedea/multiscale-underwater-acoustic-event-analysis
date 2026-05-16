@@ -1058,7 +1058,6 @@ async function init() {
     bindOverlayControls();
     state.baseLayer?.setOpacity?.(1);
     setStatus(`Environmental overlay not available: ${error.message}`);
-    console.error(error);
   }
 }
 

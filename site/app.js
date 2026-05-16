@@ -23,10 +23,7 @@ const SHOT_FALLBACK = ["whales_humpback", "whales_orca"];
  * successful base for a given asset *kind* is locked in for subsequent loads
  * (so we don't keep retrying ".." paths once we know they work).
  *
- * Diagnostics for every probe land on:
- *   - console.debug for successes,
- *   - console.warn for fallbacks,
- *   - console.error for total failures,
+ * Diagnostics are kept in memory only:
  *   - window.assetDiagnostics → { attempts, lockedBases, failures, summary() }
  * ------------------------------------------------------------------------- */
 const ASSET_BASE_CANDIDATES = {
@@ -81,11 +78,7 @@ function _recordAttempt(kind, base, rel, ok, detail) {
   if (ok) {
     if (!assetResolver.lockedBases[kind]) {
       assetResolver.lockedBases[kind] = base;
-      console.info(`[asset:${kind}] base locked → ${base} (via ${rel})`);
     }
-    console.debug(`[asset:${kind}] ${entry.url} OK`);
-  } else {
-    console.debug(`[asset:${kind}] ${entry.url} fail (${detail})`);
   }
 }
 
@@ -129,7 +122,6 @@ async function loadAssetJson(kind, relPath) {
   }
   const failure = { kind, rel, tried };
   assetResolver.failures.push(failure);
-  console.warn(`[asset:${kind}] all candidates failed for ${rel}`, tried);
   return { data: null, url: null, base: null, tried };
 }
 
@@ -151,7 +143,6 @@ async function loadAssetNpz(kind, relPath) {
   }
   const failure = { kind, rel, tried };
   assetResolver.failures.push(failure);
-  console.warn(`[asset:${kind}] all candidates failed for ${rel}`, tried);
   return { npz: null, url: null, base: null, tried };
 }
 
@@ -300,27 +291,31 @@ const el = {
 /** Selected-channel demo audio: stop before shot/channel change. */
 let selchDemoAudioSource = null;
 let selchDemoAudioState = null;
+let selchDemoAudioPlaySeq = 0;
 
 function stopSelchDemoAudio(options = {}) {
   const { silent = false } = options;
+  selchDemoAudioPlaySeq += 1;
   if (selchDemoAudioState?.frame) {
     cancelAnimationFrame(selchDemoAudioState.frame);
   }
   selchDemoAudioState = null;
-  if (!selchDemoAudioSource) {
+  const src = selchDemoAudioSource;
+  selchDemoAudioSource = null;
+  if (!src) {
     return;
   }
+  src.onended = null;
   try {
-    selchDemoAudioSource.stop(0);
+    src.stop(0);
   } catch (_) {
     /* already stopped */
   }
   try {
-    selchDemoAudioSource.disconnect();
+    src.disconnect();
   } catch (_) {
     /* ignore */
   }
-  selchDemoAudioSource = null;
   if (!silent) {
     updateDataStatus("Selected-channel audio stopped.");
   }
@@ -420,6 +415,7 @@ function startSelchDasPlayback() {
   if (!sc?.available) {
     return;
   }
+  const restartDasFromBeginning = selchDemoAudioState?.kind === "das";
   stopSelchDemoAudio({ silent: true });
   const ctx = getSharedAudioContext();
   if (!ctx) {
@@ -431,7 +427,9 @@ function startSelchDasPlayback() {
     updateDataStatus("No DAS waveform available for audio.");
     return;
   }
-  const rawStartTime = Number.isFinite(state.selchCursorTime) ? state.selchCursorTime : audio.timeStart;
+  const rawStartTime = restartDasFromBeginning
+    ? audio.timeStart
+    : (Number.isFinite(state.selchCursorTime) ? state.selchCursorTime : audio.timeStart);
   const cursorStartTime = clamp(rawStartTime, audio.timeStart, audio.timeEnd);
   const startTime = cursorStartTime >= audio.timeEnd - 0.005 ? audio.timeStart : cursorStartTime;
   const endTime = audio.timeEnd;
@@ -455,10 +453,13 @@ function startSelchDasPlayback() {
   src.buffer = buf;
   src.connect(ctx.destination);
   selchDemoAudioSource = src;
+  const playbackId = ++selchDemoAudioPlaySeq;
   const offset = clamp(startTime - audio.timeStart, 0, Math.max(0, buf.duration - 0.001));
   const duration = Math.max(0.01, Math.min(endTime - startTime, buf.duration - offset));
   const playbackEnd = Math.min(endTime, startTime + duration);
   selchDemoAudioState = {
+    id: playbackId,
+    kind: "das",
     ctx,
     ctxStartedAt: ctx.currentTime,
     startTime,
@@ -468,10 +469,11 @@ function startSelchDasPlayback() {
     frame: 0
   };
   src.onended = () => {
-    selchDemoAudioSource = null;
-    if (selchDemoAudioState) {
-      finishSelchDasPlayback();
+    if (selchDemoAudioState?.id !== playbackId) {
+      return;
     }
+    selchDemoAudioSource = null;
+    finishSelchDasPlayback();
   };
   src.start(0, offset, duration);
   tickSelchDasPlaybackCursor();
@@ -508,8 +510,14 @@ async function playSelchSourceReference() {
     src.buffer = audioBuf;
     src.connect(ctx.destination);
     selchDemoAudioSource = src;
+    const playbackId = ++selchDemoAudioPlaySeq;
+    selchDemoAudioState = { id: playbackId, kind: "source", frame: 0 };
     src.onended = () => {
+      if (selchDemoAudioState?.id !== playbackId) {
+        return;
+      }
       selchDemoAudioSource = null;
+      selchDemoAudioState = null;
     };
     src.start(0);
     updateDataStatus("Playing source reference segment (demo)…");
@@ -1040,13 +1048,6 @@ function buildDasWaterfallFromNpz(npz) {
     colorScale: null
   };
 
-  console.info(
-    `[das-waterfall] loaded shape=${shape.join("x")} orientation=${orientation} source=${payload.sourceKey}`
-  );
-  console.info(
-    `[das-waterfall] t_s ${payload.axes.t_s[0]}..${payload.axes.t_s[payload.axes.t_s.length - 1]}, ` +
-    `channels ${payload.axes.channel_indices[0]}..${payload.axes.channel_indices[payload.axes.channel_indices.length - 1]}, fs≈${fsHz?.toFixed?.(2) || "unknown"} Hz`
-  );
   return payload;
 }
 
@@ -2134,6 +2135,18 @@ function formatWaterfallAxisNumber(value) {
   return Math.abs(value) >= 1000 ? String(Math.round(value)) : Number(value).toFixed(0);
 }
 
+function formatWaterfallSampleSeconds(sampleOffset, wf) {
+  const fsHz = Number(wf?.fsHz);
+  if (!Number.isFinite(sampleOffset)) {
+    return "-";
+  }
+  if (!Number.isFinite(fsHz) || fsHz <= 0) {
+    return formatWaterfallAxisNumber(sampleOffset);
+  }
+  const seconds = sampleOffset / fsHz;
+  return `${seconds.toFixed(2)} s`;
+}
+
 function roundWaterfallLimit(value, wf) {
   if (!Number.isFinite(value) || value <= 0) {
     return 1;
@@ -2250,7 +2263,6 @@ function renderDasWaterfallPanel() {
     limit = roundWaterfallLimit(Math.max(Math.abs(qLo || 0), Math.abs(qHi || 0), 1e-6), wf);
     const colorScale = { mode: "symmetric_percentile", pLow: pLow * 100, pHigh: pHigh * 100, vmin: -limit, vmax: limit };
     wf.colorScale = colorScale;
-    console.info(`[das-waterfall] color scale p${String(Math.round(pLow * 100)).padStart(2, "0")}=${Number(qLo).toFixed(4)} p${Math.round(pHigh * 100)}=${Number(qHi).toFixed(4)} clip=±${limit.toFixed(4)}`);
 
     const colorLookup = buildWaterfallColorLookup(limit);
     const image = ctx.createImageData(renderCols, renderRows);
@@ -2369,9 +2381,10 @@ function renderDasWaterfallPanel() {
   for (const v of xTicks) {
     const frac = (v - axisStart) / Math.max(1e-9, axisEnd - axisStart);
     const x = pad.left + clamp(frac, 0, 1) * plotW;
-    ctx.fillText(formatWaterfallAxisNumber(v), x, pad.top + plotH + 8);
+    const label = sampleIndices ? formatWaterfallSampleSeconds(v, wf) : `${Number(v).toFixed(2)} s`;
+    ctx.fillText(label, x, pad.top + plotH + 8);
   }
-  ctx.fillText(sampleIndices ? "Time Sample Index" : "Time (s)", pad.left + plotW / 2, height - 14);
+  ctx.fillText("Time (s)", pad.left + plotW / 2, height - 14);
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
 
@@ -2401,7 +2414,9 @@ function renderDasWaterfallPanel() {
   ctx.font = "11px Space Grotesk";
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
-  const yTicks = [0, 200, 400, 600, 800, channels[channels.length - 1]].filter((v, idx, arr) => arr.indexOf(v) === idx);
+  const yTicks = [0, 200, 400, 600, 800].filter((v, idx, arr) => (
+    v <= channels[channels.length - 1] && arr.indexOf(v) === idx
+  ));
   for (const tick of yTicks) {
     const rowIdx = channels.findIndex((v) => Number(v) >= tick);
     const idx = rowIdx >= 0 ? rowIdx : channels.length - 1;
@@ -2435,9 +2450,14 @@ function renderDasWaterfallPanel() {
     height,
     colorLimit: limit
   };
+  const firstChannel = Number(channels[0]);
+  const lastChannel = Number(channels[channels.length - 1]);
+  const channelRangeText = Number.isFinite(firstChannel) && Number.isFinite(lastChannel)
+    ? `, raw channels ${firstChannel.toFixed(0)}-${lastChannel.toFixed(0)}`
+    : "";
   el.dasCaption.textContent =
-    `Overview of ${nRows} DAS channels for ${shotSpeciesLabel()} from ${viewInterval.start.toFixed(2)}-${viewInterval.end.toFixed(2)} s. ` +
-    "Brighter colors mark stronger changes in the fiber signal; use this panel for context, then inspect or listen to one channel in Selected DAS Channel.";
+    `DAS Waterfall preview for ${shotSpeciesLabel()}: ${nRows} DAS channel positions${channelRangeText}, ` +
+    `${viewInterval.start.toFixed(2)}-${viewInterval.end.toFixed(2)} s. Brighter colors mean stronger fiber-signal changes; hover for sample index, then inspect or listen to one channel in Selected DAS Channel.`;
 }
 
 function renderDasActivityPanel() {
@@ -3674,6 +3694,7 @@ function hitTestDas(event) {
 
   return {
     mode: geo.mode || "activity",
+    interval: geo.interval,
     time,
     sampleIndex,
     sampleOffset,
@@ -4438,9 +4459,6 @@ function buildSelectedChannelPayloadFromNpz(signalNpz, specNpz, bandNpz) {
   }
   const nf = shape[0];
   const nt = shape[1];
-  if (tSpecRec.shape[0] !== nt || freqRec.shape[0] !== nf) {
-    console.warn("Spectrogram axis lengths do not match Sxx_db shape; continuing.");
-  }
 
   const tBandRec = bandNpz.t_s;
   const scoreRec = bandNpz.bandpass_support_score;
@@ -4694,13 +4712,7 @@ async function loadManifestForShot(shotOption) {
     const m = result.url.match(/^(.*)\/shots\/[^/]+\/viewer_manifest\.json$/);
     if (m && m[1]) {
       assetResolver.lockedBases.output = m[1];
-      console.info(`[asset:output] base locked → ${m[1]} (via manifest)`);
     }
-  }
-  if (result.url) {
-    console.info(`[manifest] ${shotOption.shotId} loaded from ${result.url}`);
-  } else {
-    console.error(`[manifest] ${shotOption.shotId} failed; tried`, candidates);
   }
   return result;
 }
@@ -4804,9 +4816,11 @@ function updateHoverTooltipFromDAS(event) {
     const valueLine = isWaterfall
       ? `Amplitude ${Number(hit.value).toFixed(3)}`
       : `Normalized activity ${Number(hit.value).toFixed(3)}`;
+    const shownInterval = hit.interval || getCurrentInterval();
+    const intervalLabel = isWaterfall ? "Preview window" : "Interval";
     showTooltip(
       isWaterfall ? "DAS waterfall" : "DAS activity",
-      `${timeLine}<br>${axisLine}<br>${valueLine}<br>Interval ${getCurrentInterval().start.toFixed(2)}-${getCurrentInterval().end.toFixed(2)} s`,
+      `${timeLine}<br>${axisLine}<br>${valueLine}<br>${intervalLabel} ${shownInterval.start.toFixed(2)}-${shownInterval.end.toFixed(2)} s`,
       hit.clientX,
       hit.clientY
     );
@@ -5060,18 +5074,11 @@ async function initialize() {
   el.playbackStatus.textContent = "Cursor synced to selected interval; playback deferred to a later step.";
 
   updateDataStatus("Loading shot list from viewer index...");
-  console.info(
-    `[asset] page served from ${window.location.pathname}; probing bases`,
-    ASSET_BASE_CANDIDATES
-  );
   const indexLoad = await tryLoadJsonFromCandidates("viewer_index.json", OUTPUT_BASE_CANDIDATES);
 
   if (indexLoad.data) {
     state.shotOptions = parseIndexToShotOptions(indexLoad.data, indexLoad.url);
     updateDataStatus(`Loaded shot list from ${indexLoad.url}.`);
-    console.info(
-      `[asset] shots known: ${state.shotOptions.map((o) => o.shotId).join(", ") || "(none)"}`
-    );
   } else {
     state.indexSource = null;
     state.shotOptions = SHOT_FALLBACK.map((shotId) => ({ shotId, manifestPath: null }));
@@ -5089,17 +5096,7 @@ async function initialize() {
     await onShotChanged();
   }
 
-  /* Diagnostics summary so it is obvious which paths actually worked. */
-  const summary = assetResolver.summary();
-  console.info("[asset] locked bases", summary.lockedBases);
-  if (summary.failures.length > 0) {
-    console.warn(
-      `[asset] ${summary.failures.length} asset(s) had no candidate succeed:`,
-      summary.failures.map((f) => `${f.kind}/${f.rel}`)
-    );
-  } else {
-    console.info("[asset] all probed assets resolved.");
-  }
+  assetResolver.summary();
 }
 
 initialize().catch((error) => {
