@@ -20,6 +20,7 @@ const PLAY_INTERVAL_MS = 500;
 const el = {
   map: document.getElementById("envdash-leaflet"),
   status: document.getElementById("envdash-status"),
+  backLink: document.querySelector(".envdash-back"),
   zoomIn: document.getElementById("envdash-zoom-in"),
   zoomOut: document.getElementById("envdash-zoom-out"),
   zoomReset: document.getElementById("envdash-zoom-reset"),
@@ -75,8 +76,28 @@ const state = {
   overlayTopLeftLatLng: null,
   homeFlyFrame: null,
   tempRange: null,
-  speedRange: null
+  speedRange: null,
+  mapViewChanging: false,
+  overlayRedrawPending: false
 };
+
+function getReturnShotId() {
+  try {
+    const shot = new URLSearchParams(window.location.search).get("shot");
+    if (shot && /^[a-zA-Z0-9_-]+$/.test(shot)) {
+      return shot;
+    }
+  } catch (_error) {
+    return null;
+  }
+  return null;
+}
+
+function updateBackLink() {
+  if (!el.backLink) return;
+  const shotId = getReturnShotId();
+  el.backLink.href = shotId ? `./?shot=${encodeURIComponent(shotId)}` : "./";
+}
 
 function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
@@ -571,8 +592,10 @@ const EnvOverlay = L.Layer.extend({
     this._map = map;
     this._canvas = L.DomUtil.create("canvas", "envdash-overlay-canvas leaflet-zoom-animated");
     this._raf = null;
+    this._settleTimer = null;
     map.getPane("scientific-overlays").appendChild(this._canvas);
-    map.on("moveend zoomend resize viewreset", this._scheduleReset, this);
+    map.on("movestart zoomstart", this._beginViewChange, this);
+    map.on("moveend zoomend resize viewreset", this._settleViewChange, this);
     if (map.options.zoomAnimation && L.Browser.any3d) {
       map.on("zoomanim", this._animateZoom, this);
     }
@@ -583,15 +606,45 @@ const EnvOverlay = L.Layer.extend({
       cancelAnimationFrame(this._raf);
       this._raf = null;
     }
-    map.off("moveend zoomend resize viewreset", this._scheduleReset, this);
+    if (this._settleTimer !== null) {
+      window.clearTimeout(this._settleTimer);
+      this._settleTimer = null;
+    }
+    map.off("movestart zoomstart", this._beginViewChange, this);
+    map.off("moveend zoomend resize viewreset", this._settleViewChange, this);
     if (map.options.zoomAnimation && L.Browser.any3d) {
       map.off("zoomanim", this._animateZoom, this);
     }
+    state.mapViewChanging = false;
+    state.overlayRedrawPending = false;
     state.overlayTopLeft = null;
     state.overlayTopLeftLatLng = null;
     this._canvas.remove();
   },
-  _scheduleReset() {
+  _beginViewChange() {
+    state.mapViewChanging = true;
+    state.overlayRedrawPending = true;
+    if (this._settleTimer !== null) {
+      window.clearTimeout(this._settleTimer);
+      this._settleTimer = null;
+    }
+  },
+  _settleViewChange() {
+    if (this._settleTimer !== null) {
+      window.clearTimeout(this._settleTimer);
+    }
+    this._settleTimer = window.setTimeout(() => {
+      this._settleTimer = null;
+      state.mapViewChanging = false;
+      state.overlayRedrawPending = false;
+      this._scheduleReset(true);
+    }, 60);
+  },
+  _scheduleReset(force = false) {
+    if (state.mapViewChanging && !force) {
+      state.overlayRedrawPending = true;
+      return;
+    }
     if (this._raf !== null) return;
     this._raf = requestAnimationFrame(() => {
       this._raf = null;
@@ -732,6 +785,11 @@ function fmtPeriodDate(ts) {
 }
 
 function redrawOverlay() {
+  if (state.mapViewChanging) {
+    state.overlayRedrawPending = true;
+    updateControls();
+    return;
+  }
   state.overlay?._scheduleReset?.();
 }
 
@@ -995,6 +1053,7 @@ function bindOverlayControls() {
 }
 
 async function init() {
+  updateBackLink();
   const geoGridPromise = loadAlplakesGeoGrid(Number.NaN, Number.NaN).catch(() => null);
 
   try {

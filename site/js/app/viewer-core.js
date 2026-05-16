@@ -187,6 +187,7 @@ const state = {
 
 const el = {
   shotSelect: document.getElementById("shot-select"),
+  dashboardLink: document.querySelector(".dashboard-link-btn"),
   playBtn: document.getElementById("play-btn"),
   pauseBtn: document.getElementById("pause-btn"),
   playbackStatus: document.getElementById("playback-status"),

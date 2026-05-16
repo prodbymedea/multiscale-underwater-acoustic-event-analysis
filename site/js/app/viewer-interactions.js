@@ -555,6 +555,8 @@ async function onShotChanged() {
   const loadSeq = state.shotLoadSeq + 1;
   state.shotLoadSeq = loadSeq;
   state.selectedShotId = selectedShotId;
+  updateEnvironmentalDashboardLink();
+  syncViewerShotUrl(selectedShotId);
   state.selectedManifest = null;
   state.manifestSource = null;
   state.shotBundle = null;
@@ -650,8 +652,39 @@ async function onShotChanged() {
   }
 }
 
+function getRequestedShotIdFromUrl() {
+  try {
+    const shot = new URLSearchParams(window.location.search).get("shot");
+    if (shot && /^[a-zA-Z0-9_-]+$/.test(shot)) {
+      return shot;
+    }
+  } catch (_error) {
+    return null;
+  }
+  return null;
+}
+
+function updateEnvironmentalDashboardLink() {
+  if (!el.dashboardLink) return;
+  const shotId = state.selectedShotId || el.shotSelect?.value || getRequestedShotIdFromUrl();
+  const suffix = shotId ? `?shot=${encodeURIComponent(shotId)}` : "";
+  el.dashboardLink.href = `environmental-dashboard.html${suffix}`;
+}
+
+function syncViewerShotUrl(shotId) {
+  if (!shotId || !window.history?.replaceState) return;
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("shot", shotId);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  } catch (_error) {
+    // URL sync is only a convenience; navigation still works without it.
+  }
+}
+
 function bindEvents() {
   el.shotSelect.addEventListener("change", onShotChanged);
+  el.dashboardLink?.addEventListener("click", updateEnvironmentalDashboardLink);
   el.dasModeWaterfall?.addEventListener("click", () => setDasViewMode("waterfall"));
 
   el.dasCanvas.addEventListener("mousemove", updateHoverTooltipFromDAS, { passive: true });
@@ -757,7 +790,12 @@ async function initialize() {
 
   renderShotOptions();
   if (state.shotOptions.length > 0) {
-    el.shotSelect.value = state.shotOptions[0].shotId;
+    const requestedShotId = getRequestedShotIdFromUrl();
+    const initialShot = state.shotOptions.find((option) => option.shotId === requestedShotId)
+      ? requestedShotId
+      : state.shotOptions[0].shotId;
+    el.shotSelect.value = initialShot;
+    updateEnvironmentalDashboardLink();
     await onShotChanged();
   }
 
