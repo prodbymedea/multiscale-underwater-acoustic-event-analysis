@@ -274,6 +274,46 @@ async function warmupRuntimeCaches() {
   console.info("[warmup] runtime cache warmup completed");
 }
 
+async function prefetchCurrentShotDasWaterfall(manifest, manifestUrl, shotId) {
+  if (!manifest || !manifestUrl || !shotId) {
+    return null;
+  }
+  const files = manifest.files || {};
+  const rel = files.das_waterfall_preview || files.das_preprocessed_preview || files.das_preprocessed_preview_file || "das_waterfall_preview.npz";
+  const cacheKey = `${shotId}|${rel}`;
+  if (state.dasWaterfallCache[cacheKey] || state.dasWaterfallLoading[cacheKey]) {
+    return state.dasWaterfallLoading[cacheKey] || state.dasWaterfallCache[cacheKey];
+  }
+  const loadSeq = state.shotLoadSeq;
+  const baseDir = getBaseDir(manifestUrl);
+  state.dasWaterfallLoading[cacheKey] = (async () => {
+    try {
+      const npz =
+        (rel && (await fetchNpzFromManifestPaths(baseDir, rel))) ||
+        (await fetchNpzFromManifestPaths(baseDir, "das_waterfall_preview.npz")) ||
+        (await fetchNpzFromManifestPaths(baseDir, "das_preprocessed_preview.npz"));
+      const built = buildDasWaterfallFromNpz(npz);
+      if (!built) {
+        throw new Error("Waterfall NPZ is missing data/t_s/channel_indices.");
+      }
+      state.dasWaterfallCache[cacheKey] = built;
+      if (state.shotLoadSeq === loadSeq && state.selectedShotId === shotId && state.shotBundle) {
+        state.shotBundle.dasWaterfall = built;
+        if (state.dasViewMode === "waterfall") {
+          renderDasPanel();
+        }
+      }
+      return built;
+    } catch (error) {
+      console.warn(`[prefetchCurrentShotDasWaterfall] failed for ${shotId}: ${summarizeError(error)}`);
+      return null;
+    } finally {
+      delete state.dasWaterfallLoading[cacheKey];
+    }
+  })();
+  return state.dasWaterfallLoading[cacheKey];
+}
+
 function buildMetaFromChannelEntry(entry) {
   if (!entry) {
     return {};
@@ -583,11 +623,13 @@ async function loadBundleFromManifest(manifest, manifestUrl) {
     }
   }
 
-  const shotMetadata = await loadFile("shot_metadata");
-  const recordersSummary = await loadFile("recorders_summary");
-  const events = await loadFile("events");
-  const hydroActivity = await loadFile("hydrophone_activity");
-  const situation = await loadFile("situation");
+  const [shotMetadata, recordersSummary, events, hydroActivity, situation] = await Promise.all([
+    loadFile("shot_metadata"),
+    loadFile("recorders_summary"),
+    loadFile("events"),
+    loadFile("hydrophone_activity"),
+    loadFile("situation")
+  ]);
 
   let sourceAudioCompare = null;
   const compareRel = files.source_audio_compare || files.orca_audio_compare;
@@ -719,15 +761,22 @@ async function onShotChanged() {
 
   try {
     if (manifestResult.data && manifestResult.url) {
-      const bundle = await loadBundleFromManifest(manifestResult.data, manifestResult.url);
+      const waterfallPrefetch = prefetchCurrentShotDasWaterfall(manifestResult.data, manifestResult.url, selectedShotId);
+      const bundlePromise = loadBundleFromManifest(manifestResult.data, manifestResult.url);
+      const selectedChannelPromise = bundlePromise.then(async (bundle) => {
+        await attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, bundle);
+        return loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url);
+      });
+
+      const bundle = await bundlePromise;
       if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
         return;
       }
-      await attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, bundle);
+      await waterfallPrefetch;
       if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
         return;
       }
-      bundle.selectedChannel = await loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url);
+      bundle.selectedChannel = await selectedChannelPromise;
       if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
         return;
       }
