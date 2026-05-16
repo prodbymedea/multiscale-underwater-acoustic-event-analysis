@@ -148,6 +148,172 @@ function getBaseDir(url) {
   return idx >= 0 ? url.slice(0, idx) : "";
 }
 
+function runWhenIdle(task, timeout = 1800) {
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(() => {
+      void task();
+    }, { timeout });
+    return;
+  }
+  setTimeout(() => {
+    void task();
+  }, 700);
+}
+
+function shouldPrefetchLargeAssets() {
+  const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!conn) {
+    return true;
+  }
+  if (conn.saveData) {
+    return false;
+  }
+  const type = String(conn.effectiveType || "").toLowerCase();
+  return type !== "slow-2g" && type !== "2g";
+}
+
+async function prefetchManifestAndWarmFilesForShot(shotOption) {
+  const candidates = getManifestCandidateUrls(shotOption);
+  const manifestRes = await tryLoadJsonFromUrls(candidates);
+  if (!manifestRes?.data || !manifestRes?.url) {
+    return;
+  }
+
+  const manifest = manifestRes.data;
+  const baseDir = getBaseDir(manifestRes.url);
+  const files = manifest.files || {};
+  const prefetchSignal = new AbortController().signal;
+
+  const jsonRel = [
+    files.shot_metadata || "shot_metadata.json",
+    files.recorders_summary || "recorders_summary.json",
+    files.events || "events.json",
+    files.situation || "situation.json",
+    files.hydrophone_score_metadata_file || files.hydrophone_event_score_metadata || "hydrophone_event_score_metadata.json",
+    files.selected_channels_index || "selected_channels_index.json",
+    files.selected_channel_bundle || "selected_channel_bundle.json"
+  ];
+
+  for (const rel of jsonRel) {
+    if (!rel) {
+      continue;
+    }
+    try {
+      await fetchJsonFromManifestPaths(baseDir, rel);
+    } catch (_error) {
+      // Keep warmup best-effort and non-fatal.
+    }
+  }
+
+  const npzRel = [
+    files.hydrophone_score_file || files.hydrophone_event_score || "hydrophone_event_score.npz",
+    files.selected_channel_signal || "selected_channel_signal.npz",
+    files.selected_channel_spectrogram || "selected_channel_spectrogram.npz",
+    files.selected_channel_bandpass_score || "selected_channel_bandpass_score.npz"
+  ];
+  if (shouldPrefetchLargeAssets()) {
+    npzRel.push(files.das_waterfall_preview || files.das_preprocessed_preview_file || "das_waterfall_preview.npz");
+  }
+
+  for (const rel of npzRel) {
+    if (!rel) {
+      continue;
+    }
+    const urls = manifestRelativeFetchUrls(baseDir, rel);
+    for (const url of urls) {
+      try {
+        await fetchArrayBuffer(url, { signal: prefetchSignal });
+        break;
+      } catch (_error) {
+        // Try fallback URL candidate.
+      }
+    }
+  }
+}
+
+async function warmupRuntimeCaches() {
+  if (!state.shotOptions?.length) {
+    return;
+  }
+  const currentShotId = state.selectedShotId;
+  const otherShot = state.shotOptions.find((option) => option.shotId !== currentShotId);
+  if (otherShot) {
+    await prefetchManifestAndWarmFilesForShot(otherShot);
+  }
+
+  const sac = state.shotBundle?.sourceAudioCompare || state.shotBundle?.orcaAudioCompare;
+  const relAudio = sac?.doc?.source_wav_playback_file || sac?.doc?.source_wav_file;
+  if (sac?.baseDir && relAudio && shouldPrefetchLargeAssets()) {
+    try {
+      await fetchArrayBuffer(`${sac.baseDir}/${relAudio}`, { signal: new AbortController().signal });
+    } catch (_error) {
+      // Audio warmup is optional.
+    }
+  }
+
+  const outputBase = assetResolver.lockedBases.output || OUTPUT_BASE_CANDIDATES[0] || "output";
+  const envFiles = [
+    "environmental/environmental_mvp_meta.json",
+    "environmental/alplakes_geometry.txt.gz"
+  ];
+  if (shouldPrefetchLargeAssets()) {
+    envFiles.push("environmental/environmental_map_fields.npz");
+  }
+  for (const rel of envFiles) {
+    const url = `${outputBase}/${rel}`;
+    try {
+      if (rel.endsWith(".json")) {
+        await fetchJson(url, { signal: new AbortController().signal });
+      } else {
+        await fetchArrayBuffer(url, { signal: new AbortController().signal });
+      }
+    } catch (_error) {
+      // Environment warmup is optional.
+    }
+  }
+  console.info("[warmup] runtime cache warmup completed");
+}
+
+async function prefetchCurrentShotDasWaterfall(manifest, manifestUrl, shotId) {
+  if (!manifest || !manifestUrl || !shotId) {
+    return null;
+  }
+  const files = manifest.files || {};
+  const rel = files.das_waterfall_preview || files.das_preprocessed_preview || files.das_preprocessed_preview_file || "das_waterfall_preview.npz";
+  const cacheKey = `${shotId}|${rel}`;
+  if (state.dasWaterfallCache[cacheKey] || state.dasWaterfallLoading[cacheKey]) {
+    return state.dasWaterfallLoading[cacheKey] || state.dasWaterfallCache[cacheKey];
+  }
+  const loadSeq = state.shotLoadSeq;
+  const baseDir = getBaseDir(manifestUrl);
+  state.dasWaterfallLoading[cacheKey] = (async () => {
+    try {
+      const npz =
+        (rel && (await fetchNpzFromManifestPaths(baseDir, rel))) ||
+        (await fetchNpzFromManifestPaths(baseDir, "das_waterfall_preview.npz")) ||
+        (await fetchNpzFromManifestPaths(baseDir, "das_preprocessed_preview.npz"));
+      const built = buildDasWaterfallFromNpz(npz);
+      if (!built) {
+        throw new Error("Waterfall NPZ is missing data/t_s/channel_indices.");
+      }
+      state.dasWaterfallCache[cacheKey] = built;
+      if (state.shotLoadSeq === loadSeq && state.selectedShotId === shotId && state.shotBundle) {
+        state.shotBundle.dasWaterfall = built;
+        if (state.dasViewMode === "waterfall") {
+          renderDasPanel();
+        }
+      }
+      return built;
+    } catch (error) {
+      console.warn(`[prefetchCurrentShotDasWaterfall] failed for ${shotId}: ${summarizeError(error)}`);
+      return null;
+    } finally {
+      delete state.dasWaterfallLoading[cacheKey];
+    }
+  })();
+  return state.dasWaterfallLoading[cacheKey];
+}
+
 function buildMetaFromChannelEntry(entry) {
   if (!entry) {
     return {};
@@ -457,11 +623,13 @@ async function loadBundleFromManifest(manifest, manifestUrl) {
     }
   }
 
-  const shotMetadata = await loadFile("shot_metadata");
-  const recordersSummary = await loadFile("recorders_summary");
-  const events = await loadFile("events");
-  const hydroActivity = await loadFile("hydrophone_activity");
-  const situation = await loadFile("situation");
+  const [shotMetadata, recordersSummary, events, hydroActivity, situation] = await Promise.all([
+    loadFile("shot_metadata"),
+    loadFile("recorders_summary"),
+    loadFile("events"),
+    loadFile("hydrophone_activity"),
+    loadFile("situation")
+  ]);
 
   let sourceAudioCompare = null;
   const compareRel = files.source_audio_compare || files.orca_audio_compare;
@@ -593,18 +761,16 @@ async function onShotChanged() {
 
   try {
     if (manifestResult.data && manifestResult.url) {
+      const waterfallPrefetch = prefetchCurrentShotDasWaterfall(manifestResult.data, manifestResult.url, selectedShotId);
       const bundle = await loadBundleFromManifest(manifestResult.data, manifestResult.url);
       if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
         return;
       }
-      await attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, bundle);
-      if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
-        return;
-      }
-      bundle.selectedChannel = await loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url);
-      if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
-        return;
-      }
+      bundle.selectedChannel = {
+        loading: true,
+        available: false,
+        message: "Loading selected DAS channel preview..."
+      };
       state.shotBundle = bundle;
       resetMapViewport();
       resetMapTimelineForShot();
@@ -613,6 +779,28 @@ async function onShotChanged() {
       renderManifestMetadata();
       renderAllPanels();
       scheduleMapRender();
+
+      void waterfallPrefetch;
+      void (async () => {
+        const [hydroLoaded, selectedChannel] = await Promise.all([
+          attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, bundle),
+          loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url)
+        ]);
+        if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
+          return;
+        }
+        if (hydroLoaded) {
+          bundle.hydroActivity = bundle.hydroActivity || hydroLoaded.hydroActivity || null;
+          bundle.situation = bundle.situation || hydroLoaded.situation || null;
+          bundle.sourceAudioCompare = bundle.sourceAudioCompare || hydroLoaded.sourceAudioCompare || null;
+          bundle.orcaAudioCompare = bundle.orcaAudioCompare || hydroLoaded.orcaAudioCompare || null;
+          bundle.missingCompatibilityFiles = hydroLoaded.missingCompatibilityFiles || bundle.missingCompatibilityFiles || [];
+        }
+        bundle.selectedChannel = selectedChannel;
+        renderManifestMetadata();
+        renderAllPanels();
+        scheduleMapRender();
+      })();
       scheduleDasWaterfallPrefetch();
       if (state.shotBundle.missingCompatibilityFiles?.length) {
         updateDataStatus(
@@ -815,6 +1003,7 @@ async function initialize() {
     el.shotSelect.value = initialShot;
     updateEnvironmentalDashboardLink();
     await onShotChanged();
+    runWhenIdle(warmupRuntimeCaches, 2200);
   }
 
   const summary = assetResolver.summary();

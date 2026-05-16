@@ -762,24 +762,15 @@ async function onShotChanged() {
   try {
     if (manifestResult.data && manifestResult.url) {
       const waterfallPrefetch = prefetchCurrentShotDasWaterfall(manifestResult.data, manifestResult.url, selectedShotId);
-      const bundlePromise = loadBundleFromManifest(manifestResult.data, manifestResult.url);
-      const selectedChannelPromise = bundlePromise.then(async (bundle) => {
-        await attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, bundle);
-        return loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url);
-      });
-
-      const bundle = await bundlePromise;
+      const bundle = await loadBundleFromManifest(manifestResult.data, manifestResult.url);
       if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
         return;
       }
-      await waterfallPrefetch;
-      if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
-        return;
-      }
-      bundle.selectedChannel = await selectedChannelPromise;
-      if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
-        return;
-      }
+      bundle.selectedChannel = {
+        loading: true,
+        available: false,
+        message: "Loading selected DAS channel preview..."
+      };
       state.shotBundle = bundle;
       resetMapViewport();
       resetMapTimelineForShot();
@@ -788,6 +779,28 @@ async function onShotChanged() {
       renderManifestMetadata();
       renderAllPanels();
       scheduleMapRender();
+
+      void waterfallPrefetch;
+      void (async () => {
+        const [hydroLoaded, selectedChannel] = await Promise.all([
+          attachMainPanelsFromNpzFallback(manifestResult.data, manifestResult.url, bundle),
+          loadSelectedChannelIfPresent(manifestResult.data, manifestResult.url)
+        ]);
+        if (loadSeq !== state.shotLoadSeq || state.selectedShotId !== selectedShotId) {
+          return;
+        }
+        if (hydroLoaded) {
+          bundle.hydroActivity = bundle.hydroActivity || hydroLoaded.hydroActivity || null;
+          bundle.situation = bundle.situation || hydroLoaded.situation || null;
+          bundle.sourceAudioCompare = bundle.sourceAudioCompare || hydroLoaded.sourceAudioCompare || null;
+          bundle.orcaAudioCompare = bundle.orcaAudioCompare || hydroLoaded.orcaAudioCompare || null;
+          bundle.missingCompatibilityFiles = hydroLoaded.missingCompatibilityFiles || bundle.missingCompatibilityFiles || [];
+        }
+        bundle.selectedChannel = selectedChannel;
+        renderManifestMetadata();
+        renderAllPanels();
+        scheduleMapRender();
+      })();
       scheduleDasWaterfallPrefetch();
       if (state.shotBundle.missingCompatibilityFiles?.length) {
         updateDataStatus(

@@ -234,11 +234,11 @@ run_cmd "python3 src/extract_events_baseline.py --shot-dir output/shots/whales_h
 run_cmd "python3 src/extract_events_baseline.py --shot-dir output/shots/whales_orca --no-figures"
 
 echo
-echo "== 4) Preprocess DAS, export raw waterfall previews, and build activity maps =="
+echo "== 4) Preprocess DAS, export compact waterfall previews, and build activity maps =="
 run_cmd "python3 src/preprocess_das.py --shot whales_humpback --shot-path \"$HUMPBACK_H5\" --no-figures"
 run_cmd "python3 src/preprocess_das.py --shot whales_orca --shot-path \"$ORCA_H5\" --no-figures"
-run_cmd "python3 src/export_das_waterfall_preview.py --shot whales_humpback --shot-path \"$HUMPBACK_H5\""
-run_cmd "python3 src/export_das_waterfall_preview.py --shot whales_orca --shot-path \"$ORCA_H5\""
+run_cmd "python3 src/export_das_waterfall_preview.py --shot whales_humpback --shot-path \"$HUMPBACK_H5\" --time-downsample 4 --channel-step 4 --max-samples 12000"
+run_cmd "python3 src/export_das_waterfall_preview.py --shot whales_orca --shot-path \"$ORCA_H5\" --time-downsample 4 --channel-step 4 --max-samples 12000"
 run_cmd "python3 src/build_das_activity_map.py --shot whales_humpback --no-figures"
 run_cmd "python3 src/build_das_activity_map.py --shot whales_orca --no-figures"
 

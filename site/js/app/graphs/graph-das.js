@@ -71,17 +71,13 @@ async function ensureDasWaterfallLoaded() {
 function scheduleDasWaterfallPrefetch() {
   const loadSeq = state.shotLoadSeq;
   const shotId = state.selectedShotId;
-  const run = () => {
-    if (state.shotLoadSeq !== loadSeq || state.selectedShotId !== shotId || !state.shotBundle) {
-      return;
-    }
-    ensureDasWaterfallLoaded();
-  };
-  if (typeof requestIdleCallback === "function") {
-    requestIdleCallback(run, { timeout: 2500 });
-  } else {
-    setTimeout(run, 700);
+  if (!state.shotBundle) {
+    return;
   }
+  if (state.shotLoadSeq !== loadSeq || state.selectedShotId !== shotId) {
+    return;
+  }
+  void ensureDasWaterfallLoaded();
 }
 
 function syncDasModeControls() {

@@ -71,6 +71,13 @@ function renderSelectedChannelPanel() {
   }
 
   const sc = state.shotBundle.selectedChannel;
+  if (sc?.loading) {
+    el.selchUnavailable.hidden = false;
+    el.selchContent.hidden = true;
+    el.selchUnavailable.textContent = sc.message || "Loading selected DAS channel preview...";
+    state.geometry.selch = null;
+    return;
+  }
   if (!sc || !sc.available) {
     el.selchUnavailable.hidden = false;
     el.selchContent.hidden = true;
