@@ -208,18 +208,33 @@ async function playSelchSourceReference() {
     return;
   }
   try {
+    // Assign a play id early so concurrent/overlapping clicks can invalidate this request.
+    const playbackId = ++selchDemoAudioPlaySeq;
+    // Mark pending state so UI can reflect an in-progress play request.
+    selchDemoAudioState = { id: playbackId, kind: "source", frame: 0, pending: true };
     const url = `${sac.baseDir}/${rel}`;
     const res = await fetch(url);
     if (!res.ok) {
+      // If another play was requested while fetching, bail out.
+      if (selchDemoAudioPlaySeq !== playbackId) {
+        return;
+      }
       throw new Error(`HTTP ${res.status}`);
     }
     const arr = await res.arrayBuffer();
+    // If a newer play request arrived while fetching, cancel this one.
+    if (selchDemoAudioPlaySeq !== playbackId) {
+      return;
+    }
     const audioBuf = await ctx.decodeAudioData(arr.slice(0));
+    // If a newer play request arrived while decoding, cancel this one.
+    if (selchDemoAudioPlaySeq !== playbackId) {
+      return;
+    }
     const src = ctx.createBufferSource();
     src.buffer = audioBuf;
     src.connect(ctx.destination);
     selchDemoAudioSource = src;
-    const playbackId = ++selchDemoAudioPlaySeq;
     selchDemoAudioState = { id: playbackId, kind: "source", frame: 0 };
     src.onended = () => {
       if (selchDemoAudioState?.id !== playbackId) {
