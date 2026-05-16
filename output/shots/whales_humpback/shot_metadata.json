@@ -1,0 +1,85 @@
+{
+  "file": "2022-01-26--04-46-16--Humpback.h5",
+  "file_size_mb": 355.91,
+  "top_level_attrs": {
+    "Project Name": "DASLakeZurich",
+    "Project Title": "Test experiments with distributed acoustic sensing and hydrophone arrays for locating underwater sound sources.",
+    "Experiment Begin": "2022-01-25",
+    "Experiment End": "2022-01-27",
+    "Experiment Location": "Lake of Zurich",
+    "Institution": "ETH Zurich",
+    "License": "CC-BY 4.0",
+    "Year": "2022",
+    "Author Names": [
+      "Jörg Rychen",
+      "Patrick Paitz",
+      "Pascal Edme",
+      "Krystyna Smolinski",
+      "Joeri Brackenhoff",
+      "Andreas Fichtner"
+    ],
+    "Author ORCIDs": [
+      "0000-0002-3302-0193",
+      "0000-0001-7464-224X",
+      "0000-0002-3041-0559",
+      "-",
+      "0000-0001-7697-1194",
+      "0000-0003-3090-963X"
+    ],
+    "Author Affilations": [
+      "Department of Information Technology and Electrical Engineering, ETH Zurich, Zurich, Switzerland",
+      "Department of Earth Sciences, ETH Zurich, Zurich, Switzerland",
+      "Department of Earth Sciences, ETH Zurich, Zurich, Switzerland",
+      "Department of Earth Sciences, ETH Zurich, Zurich, Switzerland",
+      "Department of Earth Sciences, ETH Zurich, Zurich, Switzerland",
+      "Department of Earth Sciences, ETH Zurich, Zurich, Switzerland"
+    ],
+    "Dataset DOI": "DOI:10.5281/zenodo.7886409",
+    "Publication Title": "Test experiments with distributed acoustic sensing and hydrophone arrays for locating underwater sounds.",
+    "Publication": "www.arxiv.org",
+    "Experimental Run": "2022-01-26--04--Whales",
+    "Shots": 2,
+    "Shot": 0
+  },
+  "groups_present": [
+    "DAS",
+    "Recorder-C",
+    "Source"
+  ],
+  "recorders_available": [
+    "Recorder-C"
+  ],
+  "has_das": true,
+  "has_source": true,
+  "das": {
+    "shape_npts_x_nchan": [
+      166369,
+      946
+    ],
+    "dtype": "int16",
+    "fs_hz": 5000.0,
+    "gauge_length_m": 10.0,
+    "spatial_resolution_m": 1.0,
+    "start_distance_m": 43.946617126464844,
+    "stop_distance_m": 1009.7672119140625,
+    "unit": null,
+    "amp_scaling": 3.5400390625,
+    "part_start_time": "2022-01-26T04:46:24.601960+00:00",
+    "part_end_time": "2022-01-26T04:46:57.875760+00:00",
+    "n_channels": 946,
+    "n_samples": 166369
+  },
+  "source": {
+    "shape": [
+      2056192
+    ],
+    "dtype": "float32",
+    "fs_hz": 50000.0,
+    "duration_s": 41.12384033203125,
+    "depth_m": 4.0,
+    "pos_x_m": 2683379.35199726,
+    "pos_y_m": 1246030.234507695,
+    "start_time": "2022-01-26T04:46:16.751820+00:00",
+    "signal_description": "Sound pressure @1m"
+  }
+}

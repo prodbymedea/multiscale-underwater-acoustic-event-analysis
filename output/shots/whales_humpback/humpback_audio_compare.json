@@ -1,0 +1,22 @@
+{
+  "schema_version": "orca_audio_compare_v1",
+  "shot_id": "whales_humpback",
+  "source_wav_file": "humpback_source_segment.wav",
+  "source_sample_rate_hz": 50000,
+  "time_range_s_das_axis": [
+    0.0,
+    33.2738
+  ],
+  "alignment_note": "Indices floor(t0×fs_source):ceil(t1×fs_source) using DAS preprocessing start_time_s/end_time_s (seconds from DAS trace origin in export). Experimental reference only.",
+  "interpretation": "Source: dataset 'Sound pressure @1m' reference. DAS: band-limited, received strain-related channel (demo playback). Humpback DAS is often weaker and noisier than Orca on selected channels—compare for structure and sparsity only, not validated bioacoustic truth.",
+  "source_wav_playback_file": "humpback_source_segment_playback.wav",
+  "source_playback_trim": {
+    "pre_roll_s": 0.1,
+    "peak_fraction_threshold": 0.01,
+    "onset_sample_in_full_segment": 285146,
+    "playback_starts_at_sample": 280146,
+    "removed_leading_s": 5.60292,
+    "playback_wav_samples": 1383544
+  },
+  "source_playback_note": "source_wav_playback_file is for browser convenience only: leading silence removed (first sample reaching >= peak_fraction_threshold × max|sample|), with pre_roll_s kept before onset. source_wav_file remains the full DAS-interval-aligned segment for any comparison that needs exact alignment."
+}

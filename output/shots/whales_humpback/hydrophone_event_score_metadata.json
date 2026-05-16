@@ -1,0 +1,57 @@
+{
+  "schema_version": "hydrophone_event_score_v1",
+  "shot_id": "whales_humpback",
+  "source_h5": "2022-01-26--04-46-16--Humpback.h5",
+  "support_layer_note": "Hydrophone event score is a support/timing layer for synchronized interpretation. It is not whale probability and not species classification.",
+  "source_files": {
+    "spectrogram": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_humpback/spectrogram.json",
+    "events_json": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_humpback/events.json",
+    "das_activity_map_npz": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_humpback/das_activity_map.npz"
+  },
+  "detector": {
+    "recorder": "Recorder-C",
+    "preview_channel": "Tetra-Top",
+    "frequency_band_hz": [
+      30.0,
+      1500.0
+    ],
+    "threshold_method": "median + k * (1.4826 * MAD)",
+    "mad_k": 3.0,
+    "threshold_db": -54.91280150492349,
+    "max_gap_frames": 2,
+    "min_duration_s": 0.25
+  },
+  "score_arrays": {
+    "t_s_len": 403,
+    "raw_score": "mean Sxx_db over selected frequency bins",
+    "normalized_event_score": "robust percentile normalized score in [0,1]",
+    "normalization": {
+      "p_low": 5.0,
+      "p_high": 99.0,
+      "lo": -62.32306655120849,
+      "hi": -53.68814670283
+    },
+    "active_mask_definition": "raw_score > threshold_db"
+  },
+  "time_alignment_with_das_activity": {
+    "das_activity_found": true,
+    "hydro_time_range_s": [
+      0.0,
+      41.1648
+    ],
+    "das_activity_time_range_s": [
+      0.25,
+      32.95000076293945
+    ],
+    "time_overlap": true,
+    "overlap_time_range_s": [
+      0.25,
+      32.95000076293945
+    ],
+    "hydro_dt_s": 0.10239999999999938,
+    "das_activity_dt_s": 0.10000038146972656,
+    "nearest_mapping_time_tolerance_s": 0.10239999999999938,
+    "notes": "Hydrophone support score indicates when to inspect; DAS activity map indicates where/how along cable."
+  },
+  "n_candidate_events": 3
+}

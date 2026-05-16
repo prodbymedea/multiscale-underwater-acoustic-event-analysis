@@ -1,0 +1,33 @@
+{
+  "schema_version": "viewer_event_guidance_v1",
+  "shot_id": "whales_orca",
+  "n_events": 2,
+  "events_json": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_orca/events.json",
+  "score_file_npz": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_orca/hydrophone_event_score.npz",
+  "score_metadata_json": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_orca/hydrophone_event_score_metadata.json",
+  "das_activity_map_npz": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_orca/das_activity_map.npz",
+  "time_alignment_with_das_activity": {
+    "das_activity_found": true,
+    "hydro_time_range_s": [
+      0.0,
+      107.2128
+    ],
+    "das_activity_time_range_s": [
+      0.25,
+      101.94999694824219
+    ],
+    "time_overlap": true,
+    "overlap_time_range_s": [
+      0.25,
+      101.94999694824219
+    ],
+    "hydro_dt_s": 0.10240000000000293,
+    "das_activity_dt_s": 0.09999847412109375,
+    "nearest_mapping_time_tolerance_s": 0.10240000000000293,
+    "notes": "Hydrophone support score indicates when to inspect; DAS activity map indicates where/how along cable."
+  },
+  "recommended_default_interval_s": [
+    44.08,
+    48.08
+  ]
+}

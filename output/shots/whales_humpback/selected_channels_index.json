@@ -1,0 +1,72 @@
+{
+  "schema_version": "selected_channels_index_v1",
+  "shot_id": "whales_humpback",
+  "default_preview_col": 118,
+  "recommended_bandpass_hz": [
+    15.0,
+    1200.0
+  ],
+  "channels": [
+    {
+      "preview_col": 118,
+      "raw_das_channel_index": 590,
+      "distance_m": 633.9465942382812,
+      "label": "Humpback DAS raw ch 590 (preview col 118, ~633.9 m along cable)",
+      "files": {
+        "signal": "selected_channel_p118_signal.npz",
+        "spectrogram": "selected_channel_p118_spectrogram.npz",
+        "bandpass_score": "selected_channel_p118_bandpass_score.npz"
+      }
+    },
+    {
+      "preview_col": 42,
+      "raw_das_channel_index": 210,
+      "distance_m": 253.94662475585938,
+      "label": "Humpback DAS raw ch 210 (preview col 42, ~253.9 m along cable)",
+      "files": {
+        "signal": "selected_channel_p42_signal.npz",
+        "spectrogram": "selected_channel_p42_spectrogram.npz",
+        "bandpass_score": "selected_channel_p42_bandpass_score.npz"
+      }
+    },
+    {
+      "preview_col": 95,
+      "raw_das_channel_index": 475,
+      "distance_m": 518.9465942382812,
+      "label": "Humpback DAS raw ch 475 (preview col 95, ~518.9 m along cable)",
+      "files": {
+        "signal": "selected_channel_p95_signal.npz",
+        "spectrogram": "selected_channel_p95_spectrogram.npz",
+        "bandpass_score": "selected_channel_p95_bandpass_score.npz"
+      }
+    },
+    {
+      "preview_col": 20,
+      "raw_das_channel_index": 100,
+      "distance_m": 143.94662475585938,
+      "label": "Humpback DAS raw ch 100 (preview col 20, ~143.9 m along cable)",
+      "files": {
+        "signal": "selected_channel_p20_signal.npz",
+        "spectrogram": "selected_channel_p20_spectrogram.npz",
+        "bandpass_score": "selected_channel_p20_bandpass_score.npz"
+      }
+    },
+    {
+      "preview_col": 154,
+      "raw_das_channel_index": 770,
+      "distance_m": 813.9465942382812,
+      "label": "Humpback DAS raw ch 770 (preview col 154, ~813.9 m along cable)",
+      "files": {
+        "signal": "selected_channel_p154_signal.npz",
+        "spectrogram": "selected_channel_p154_spectrogram.npz",
+        "bandpass_score": "selected_channel_p154_bandpass_score.npz"
+      }
+    }
+  ],
+  "notes": [
+    "Maps preview_column to per-channel NPZ triples for selected-channel Stage-2 viewer.",
+    "Legacy filenames selected_channel_*.npz duplicate the default_preview_col exports.",
+    "Both whales shots export bandpass_waveform for DAS demo audio; source WAV/JSON uses files.orca_audio_compare (Orca) or files.source_audio_compare (Humpback).",
+    "Orca-only: NCC-guided raw resolve targets (859, 861, 862, 920) → nearest preview grid; see docs/orca_ncc_summary.md."
+  ]
+}

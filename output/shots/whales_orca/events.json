@@ -1,0 +1,85 @@
+{
+  "schema_version": "baseline_hydrophone_stft_v1",
+  "shot_id": "whales_orca",
+  "source_h5": "2022-01-26--04-47-42--Orca.h5",
+  "source_files": {
+    "spectrogram": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_orca/spectrogram.json",
+    "shot_metadata": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_orca/shot_metadata.json",
+    "das_preview": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_orca/das_preview.json"
+  },
+  "parameters": {
+    "recorder": "Recorder-C",
+    "preview_channel": "Tetra-Top",
+    "band_hz": [
+      30.0,
+      1500.0
+    ],
+    "mad_k": 3.0,
+    "threshold_db": -54.4865,
+    "score_definition": "mean Sxx_db over frequency bins in band, per STFT frame",
+    "score_normalization": {
+      "method": "robust percentile normalization to [0,1]",
+      "p_low": 5.0,
+      "p_high": 99.0,
+      "lo": -60.42473347345988,
+      "hi": -54.17806000773112
+    },
+    "max_gap_frames": 2,
+    "min_duration_s": 0.25
+  },
+  "n_events": 2,
+  "events": [
+    {
+      "event_id": "whales_orca_001",
+      "shot_id": "whales_orca",
+      "start_time_s": 45.8752,
+      "end_time_s": 46.2848,
+      "duration_s": 0.512,
+      "score": -54.386,
+      "mean_score": -54.386,
+      "peak_time_s": 45.8752,
+      "peak_score": -53.00066663106283,
+      "max_normalized_score": 1.0,
+      "threshold": -54.48651522617975,
+      "frequency_band_hz": [
+        30.0,
+        1500.0
+      ],
+      "source_score_file": "hydrophone_event_score.npz",
+      "detection_basis": "hydrophone STFT mean dB (30-1500 Hz), Recorder-C/Tetra-Top; threshold median+MAD*k (k=3.0)",
+      "notes": "score_peak_db=-53.00, mean_excess_over_threshold_db=0.10",
+      "source_h5": "2022-01-26--04-47-42--Orca.h5",
+      "das_support": {
+        "peak_std_channel_index": 0,
+        "peak_std_distance_m": 43.946617126464844,
+        "peak_std_value": 1146.6683900200328
+      }
+    },
+    {
+      "event_id": "whales_orca_002",
+      "shot_id": "whales_orca",
+      "start_time_s": 51.0976,
+      "end_time_s": 51.5072,
+      "duration_s": 0.512,
+      "score": -53.51,
+      "mean_score": -53.51,
+      "peak_time_s": 51.5072,
+      "peak_score": -52.431999855041504,
+      "max_normalized_score": 1.0,
+      "threshold": -54.48651522617975,
+      "frequency_band_hz": [
+        30.0,
+        1500.0
+      ],
+      "source_score_file": "hydrophone_event_score.npz",
+      "detection_basis": "hydrophone STFT mean dB (30-1500 Hz), Recorder-C/Tetra-Top; threshold median+MAD*k (k=3.0)",
+      "notes": "score_peak_db=-52.43, mean_excess_over_threshold_db=0.98",
+      "source_h5": "2022-01-26--04-47-42--Orca.h5",
+      "das_support": {
+        "peak_std_channel_index": 1,
+        "peak_std_distance_m": 93.94661712646484,
+        "peak_std_value": 1028.4201796158977
+      }
+    }
+  ]
+}

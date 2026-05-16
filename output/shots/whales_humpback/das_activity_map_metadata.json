@@ -1,0 +1,100 @@
+{
+  "schema_version": "das_activity_map_v1",
+  "shot_slug": "whales_humpback",
+  "input_files": {
+    "preprocessed_npz": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_humpback/das_preprocessed_preview.npz",
+    "preprocessing_metadata": "/Users/zolinnaa/Desktop/multiscale-underwater-acoustic-event-analysis/output/shots/whales_humpback/das_preprocessing_metadata.json"
+  },
+  "detected_input_structure": {
+    "npz_keys": [
+      "raw_preview",
+      "preprocessed_preview",
+      "t_s",
+      "channel_indices",
+      "distances_m"
+    ],
+    "preprocessed_shape_n_time_x_n_channels": [
+      16637,
+      190
+    ],
+    "t_s_shape": [
+      16637
+    ],
+    "channel_indices_shape": [
+      190
+    ],
+    "distances_m_shape": [
+      190
+    ],
+    "preview_dt_s": 0.0019998550415039062,
+    "preview_fs_hz": 500.0362422508345
+  },
+  "rolling_rms_parameters": {
+    "window_s": 0.5,
+    "hop_s": 0.1,
+    "window_samples": 250,
+    "hop_samples": 50,
+    "n_windows": 328
+  },
+  "normalization": {
+    "mode": "per-channel",
+    "p_low": 5.0,
+    "p_high": 99.0,
+    "median_lo": 0.9027446508407593,
+    "median_hi": 1.17610502243042
+  },
+  "output_arrays": {
+    "activity_map_shape_n_windows_x_n_channels": [
+      328,
+      190
+    ],
+    "activity_value_range": [
+      0.0,
+      1.0
+    ],
+    "rolling_rms_saved": false
+  },
+  "stats": {
+    "rolling_rms": {
+      "min": 0.734953761100769,
+      "max": 3.510118246078491,
+      "mean": 1.0092511177062988,
+      "std": 0.15106049180030823,
+      "p01": 0.8575121825933456,
+      "p02": 0.8735188543796539,
+      "p05": 0.8970790266990661,
+      "p50": 0.9964547157287598,
+      "p95": 1.1243601858615875,
+      "p98": 1.1746783781051628,
+      "p99": 1.2288284480571747
+    },
+    "activity_map": {
+      "min": 0.0,
+      "max": 1.0,
+      "mean": 0.35133063793182373,
+      "std": 0.23974484205245972,
+      "p01": 0.0,
+      "p02": 0.0,
+      "p05": 0.0,
+      "p50": 0.3245289623737335,
+      "p95": 0.7969865381717681,
+      "p98": 0.932484928369521,
+      "p99": 1.0
+    }
+  },
+  "source_preprocessing_summary": {
+    "centering": "per-channel median removal over selected interval",
+    "filter_kind": "bandpass",
+    "filter_order": 4,
+    "fmin_hz": 15.0,
+    "fmax_hz": 1200.0,
+    "normalization": "per-channel robust z-like scaling using MAD",
+    "normalization_meta": {
+      "median_of_channel_medians": 0.1127115980002662,
+      "median_of_channel_scales": 354.98462590829996,
+      "clip_abs": 8.0
+    },
+    "preview_downsample_factor": 10
+  },
+  "notes": "This map represents normalized rolling RMS DAS activity for visualization. It is not a calibrated whale probability and not a classifier output."
+}
